@@ -1,17 +1,27 @@
 -module(raft_nodes).
 
+-include_lib("eunit/include/eunit.hrl").
+
 -behaviour(gen_fsm).
 
 %% API
--export([start_link/0]).
+-export([start/1, start_link/1]).
 
 %% gen_fsm callbacks
--export([init/1, state_name/2, state_name/3, handle_event/3,
+-export([init/1, follower/2, follower/3, handle_event/3,
          handle_sync_event/4, handle_info/3, terminate/3, code_change/4]).
 
 -define(SERVER, ?MODULE).
 
--record(state, {}).
+-record(state, {name="",
+                current_term=0,
+                current_state
+               }).
+
+%% -record(node, {status=follower,
+%%                name="",
+%%                current_term=0
+%%               }).
 
 %%%===================================================================
 %%% API
@@ -23,11 +33,22 @@
 %% initialize. To ensure a synchronized start-up procedure, this
 %% function does not return until Module:init/1 has returned.
 %%
-%% @spec start_link() -> {ok, Pid} | ignore | {error, Error}
+%% @spec start_link(Name) -> {ok, Pid} | ignore | {error, Error}
 %% @end
 %%--------------------------------------------------------------------
-start_link() ->
-    gen_fsm:start_link({local, ?SERVER}, ?MODULE, [], []).
+start_link(Name) ->
+    gen_fsm:start_link({local, ?SERVER}, ?MODULE, [Name], []).
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Same as start_link, but used for a standalone process, i.e. when it
+%% is not part of supervision tree.
+%%
+%% @spec start() -> {ok, Pid} | ignore | {error, Error}
+%% @end
+%%--------------------------------------------------------------------
+start(Name) ->
+    gen_fsm:start(?MODULE, [], [Name]).
 
 %%%===================================================================
 %%% gen_fsm callbacks
@@ -46,9 +67,9 @@ start_link() ->
 %%                     {stop, StopReason}
 %% @end
 %%--------------------------------------------------------------------
-init([]) ->
+init([Name]) ->
     process_flag(trap_exit, true),
-    {ok, state_name, #state{}}.
+    {ok, follower, #state{name=Name, current_state=follower}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -65,8 +86,18 @@ init([]) ->
 %%                   {stop, Reason, NewState}
 %% @end
 %%--------------------------------------------------------------------
-state_name(_Event, State) ->
-    {next_state, state_name, State}.
+follower(Event, State) ->
+    case Event of
+        request_votes ->
+            io:format(Event),
+            io:format("~n"),
+            io:format(State),
+            cast_vote(),
+            {next_state, follower, State, 150};
+        timeout ->
+            %% start a new election
+            {next_state, candidate, start_election, 0}
+    end.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -86,9 +117,18 @@ state_name(_Event, State) ->
 %%                   {stop, Reason, Reply, NewState}
 %% @end
 %%--------------------------------------------------------------------
-state_name(_Event, _From, State) ->
+follower(_Event, _From, State) ->
     Reply = ok,
-    {reply, Reply, state_name, State}.
+    {reply, Reply, follower, State}.
+
+%% candidate(Event, State) ->
+%%     case Event of
+%%         start_election ->
+%%             %% TODO: Send network requests to all nodes
+%%             {next_state, candidate, State, 200};
+%%         timeout ->
+%%             {next_state, follower, State, 180}
+%%     end.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -171,3 +211,15 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+
+cast_vote() ->
+    1.
+
+%% Tests
+
+%% starts_test() ->
+%%     {ok, _Pid} = raft_nodes:start_link("A").
+
+follower_test() ->
+    {ok, Pid} = raft_nodes:start_link("A"),
+    ok = gen_fsm:sync_send_event(Pid, request_votes).
