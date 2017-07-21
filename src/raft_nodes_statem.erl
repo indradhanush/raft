@@ -7,7 +7,7 @@
 
 %% gen_statem callbacks
 -export([callback_mode/0, init/1, terminate/3, code_change/4]).
--export([state_name/3]).
+-export([follower/3]).
 
 -define(SERVER, ?MODULE).
 
@@ -57,7 +57,7 @@ callback_mode() -> state_functions.
                   gen_statem:init_result(atom()).
 init([]) ->
     process_flag(trap_exit, true),
-    {ok, state_name, #data{}}.
+    {ok, follower, #data{}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -68,16 +68,20 @@ init([]) ->
 %% is called to handle the event.
 %% @end
 %%--------------------------------------------------------------------
--spec state_name('enter',
-                 OldState :: atom(),
-                 Data :: term()) ->
-                        gen_statem:state_enter_result('state_name');
-                (gen_statem:event_type(),
-                 Msg :: term(),
-                 Data :: term()) ->
-                        gen_statem:event_handler_result(atom()).
-state_name({call,Caller}, _Msg, Data) ->
-    {next_state, state_name, Data, [{reply,Caller,ok}]}.
+%% -spec state_name('enter',
+%%                  OldState :: atom(),
+%%                  Data :: term()) ->
+%%                         gen_statem:state_enter_result('state_name');
+%%                 (gen_statem:event_type(),
+%%                  Msg :: term(),
+%%                  Data :: term()) ->
+%%                         gen_statem:event_handler_result(atom()).
+%% state_name({call,Caller}, _Msg, Data) ->
+%%     {next_state, state_name, Data, [{reply,Caller,ok}]}.
+
+follower({call, From}, _Action, State) ->
+    {next_state, follower, State,[{reply, From, follower}]}.
+
 
 %%--------------------------------------------------------------------
 %% @private
