@@ -3,102 +3,87 @@
 -behaviour(gen_statem).
 
 %% API
--export([start_link/0]).
+-export([start/0, start_link/1]).
 
 %% gen_statem callbacks
 -export([callback_mode/0, init/1, terminate/3, code_change/4]).
--export([state_name/3]).
+-export([follower/3, candidate/3]).
 
 -define(SERVER, ?MODULE).
 
--record(data, {}).
+-record(metadata, {name,
+                   nodes,
+                   term}).
+
+-record(vote_request, {term, candidate_id}).
+
+-record(vote_granted, {term, voter_id}).
 
 %%%===================================================================
-%%% API
+%%% Public API
 %%%===================================================================
+start() ->
+    raft_nodes_statem:start_link(n1),
+    raft_nodes_statem:start_link(n2),
+    raft_nodes_statem:start_link(n3).
 
-%%--------------------------------------------------------------------
-%% @doc
-%% Creates a gen_statem process which calls Module:init/1 to
-%% initialize. To ensure a synchronized start-up procedure, this
-%% function does not return until Module:init/1 has returned.
-%%
-%% @end
-%%--------------------------------------------------------------------
--spec start_link() ->
-                        {ok, Pid :: pid()} |
-                        ignore |
-                        {error, Error :: term()}.
-start_link() ->
-    gen_statem:start_link({local, ?SERVER}, ?MODULE, [], []).
+
+start_link(Name) ->
+    gen_statem:start_link({local, Name}, ?MODULE, [Name], []).
 
 %%%===================================================================
 %%% gen_statem callbacks
 %%%===================================================================
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Define the callback_mode() for this callback module.
-%% @end
-%%--------------------------------------------------------------------
 -spec callback_mode() -> gen_statem:callback_mode_result().
 callback_mode() -> state_functions.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Whenever a gen_statem is started using gen_statem:start/[3,4] or
-%% gen_statem:start_link/[3,4], this function is called by the new
-%% process to initialize.
-%% @end
-%%--------------------------------------------------------------------
 -spec init(Args :: term()) ->
                   gen_statem:init_result(atom()).
-init([]) ->
-    process_flag(trap_exit, true),
-    {ok, state_name, #data{}}.
+init(Name) ->
+    {ok,
+     follower,
+     #metadata{name=Name, nodes=lists:delete(Name, [n1, n2, n3]), term=0},
+     [get_timeout_options()]}.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% There should be one function like this for each state name.
-%% Whenever a gen_statem receives an event, the function 
-%% with the name of the current state (StateName) 
-%% is called to handle the event.
-%% @end
-%%--------------------------------------------------------------------
--spec state_name('enter',
-                 OldState :: atom(),
-                 Data :: term()) ->
-                        gen_statem:state_enter_result('state_name');
-                (gen_statem:event_type(),
-                 Msg :: term(),
-                 Data :: term()) ->
-                        gen_statem:event_handler_result(atom()).
-state_name({call,Caller}, _Msg, Data) ->
-    {next_state, state_name, Data, [{reply,Caller,ok}]}.
+%% -spec state_name('enter',
+%%                  OldState :: atom(),
+%%                  Data :: term()) ->
+%%                         gen_statem:state_enter_result('state_name');
+%%                 (gen_statem:event_type(),
+%%                  Msg :: term(),
+%%                  Data :: term()) ->
+%%                         gen_statem:event_handler_result(atom()).
+%% state_name({call,Caller}, _Msg, Data) ->
+%%     {next_state, state_name, Data, [{reply,Caller,ok}]}.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% This function is called by a gen_statem when it is about to
-%% terminate. It should be the opposite of Module:init/1 and do any
-%% necessary cleaning up. When it returns, the gen_statem terminates with
-%% Reason. The return value is ignored.
-%% @end
-%%--------------------------------------------------------------------
+follower(timeout, ticker, #metadata{term=Term, name=Name}=Data) ->
+    %% Start an election
+    io:format("~p: timeout~n", [Name]),
+    {next_state, candidate, Data#metadata{term=Term+1}, [get_timeout_options(0)]};
+
+follower(cast, #vote_request{candidate_id=CandidateId}=VoteRequest, #metadata{name=Name}) ->
+    io:format("~p: Received vote request from: ~p~n", [Name, CandidateId]),
+    send_vote(Name, VoteRequest),
+    keep_state_and_data.
+
+
+candidate(timeout, ticker, #metadata{name=Name}=Data) ->
+    io:format("~p: starting election~n", [Name]),
+    start_election(Data),
+    {next_state, candidate, Data, [get_timeout_options()]};
+
+candidate(cast, #vote_granted{voter_id=Voter}, #metadata{name=Name}) ->
+    io:format("~p: Received vote from ~p~n", [Name, Voter]),
+    keep_state_and_data.
+
+
 -spec terminate(Reason :: term(), State :: term(), Data :: term()) ->
                        any().
-terminate(_Reason, _State, _Data) ->
-    void.
+terminate(_Reason, _State, Data) ->
+    {next_state, eof, Data, [get_timeout_options()]}.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Convert process state when code is changed
-%% @end
-%%--------------------------------------------------------------------
+
 -spec code_change(
         OldVsn :: term() | {down,term()},
         State :: term(), Data :: term(), Extra :: term()) ->
@@ -110,3 +95,23 @@ code_change(_OldVsn, State, Data, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+
+get_timeout_options() ->
+    get_timeout_options(1500 + rand:uniform(150)).
+
+get_timeout_options(Time) ->
+    {timeout, Time, ticker}.
+
+
+start_election(#metadata{name=Name, nodes=Nodes, term=Term}) ->
+    VoteRequest = #vote_request{term=Term, candidate_id=Name},
+    [request_vote(Voter, VoteRequest) || Voter <- Nodes].
+
+
+request_vote(Voter, VoteRequest) ->
+    gen_statem:cast(Voter, VoteRequest).
+
+
+send_vote(Name, #vote_request{term=Term, candidate_id=CandidateId}) ->
+    VoteGranted = #vote_granted{term=Term, voter_id=Name},
+    gen_statem:cast(CandidateId, VoteGranted).
