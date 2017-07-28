@@ -11,9 +11,7 @@
 
 -define(SERVER, ?MODULE).
 
--record(metadata, {name,
-                   nodes,
-                   term}).
+-record(metadata, {name, nodes, term}).
 
 -record(vote_request, {term, candidate_id}).
 
@@ -40,7 +38,7 @@ callback_mode() -> state_functions.
 
 -spec init(Args :: term()) ->
                   gen_statem:init_result(atom()).
-init(Name) ->
+init([Name]) ->
     {ok,
      follower,
      #metadata{name=Name, nodes=lists:delete(Name, [n1, n2, n3]), term=0},
@@ -57,7 +55,7 @@ init(Name) ->
 %% state_name({call,Caller}, _Msg, Data) ->
 %%     {next_state, state_name, Data, [{reply,Caller,ok}]}.
 
-follower(timeout, ticker, #metadata{term=Term, name=Name}=Data) ->
+follower(timeout, ticker, #metadata{term=Term, name=Name}=Data) when is_atom(Name) ->
     %% Start an election
     io:format("~p: timeout~n", [Name]),
     {next_state, candidate, Data#metadata{term=Term+1}, [get_timeout_options(0)]};
