@@ -11,7 +11,7 @@
 
 -define(SERVER, ?MODULE).
 
--record(metadata, {name, nodes, term}).
+-record(metadata, {name, nodes, term, voted = false}).
 
 -record(vote_request, {term, candidate_id}).
 
@@ -60,9 +60,20 @@ follower(timeout, ticker, #metadata{term=Term, name=Name}=Data) when is_atom(Nam
     io:format("~p: timeout~n", [Name]),
     {next_state, candidate, Data#metadata{term=Term+1}, [get_timeout_options(0)]};
 
-follower(cast, #vote_request{candidate_id=CandidateId}=VoteRequest, #metadata{name=Name}) ->
+follower(cast, #vote_request{candidate_id=CandidateId}=VoteRequest, #metadata{name=Name, voted=Voted}=Data) ->
     io:format("~p: Received vote request from: ~p~n", [Name, CandidateId]),
-    send_vote(Name, VoteRequest),
+    case Voted of
+        true ->
+            io:format("~p: Already voted~n", [Name]),
+            {keep_state_and_data, [get_timeout_options()]};
+        false ->
+            send_vote(Name, VoteRequest),
+            io:format("~p: Vote sent to ~p~n", [Name, CandidateId]),
+            {keep_state, Data#metadata{voted=true}, [get_timeout_options()]}
+    end;
+
+follower(cast, #vote_granted{}, #metadata{name=Name}) ->
+    io:format("~p: Received vote in follower state~n", [Name]),
     keep_state_and_data.
 
 
@@ -71,9 +82,14 @@ candidate(timeout, ticker, #metadata{name=Name}=Data) ->
     start_election(Data),
     {next_state, candidate, Data, [get_timeout_options()]};
 
+candidate(cast, #vote_request{}, #metadata{name=Name}) ->
+    io:format("~p: Received vote request in candidate state~n", [Name]),
+    {keep_state_and_data, [get_timeout_options()]};
+
 candidate(cast, #vote_granted{voter_id=Voter}, #metadata{name=Name}) ->
     io:format("~p: Received vote from ~p~n", [Name, Voter]),
-    keep_state_and_data.
+    {keep_state_and_data, [get_timeout_options()]}.
+
 
 
 -spec terminate(Reason :: term(), State :: term(), Data :: term()) ->
