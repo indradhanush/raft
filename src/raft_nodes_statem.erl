@@ -7,15 +7,18 @@
 
 %% gen_statem callbacks
 -export([callback_mode/0, init/1, terminate/3, code_change/4]).
--export([follower/3, candidate/3]).
+-export([follower/3, candidate/3, leader/3]).
 
 -define(SERVER, ?MODULE).
 
--record(metadata, {name, nodes, term, voted = false}).
+-record(metadata, {name, nodes, term, votes = [], voted = false}).
 
 -record(vote_request, {term, candidate_id}).
 
 -record(vote_granted, {term, voter_id}).
+
+-record(append_entries, {term, leader_id, entries = []}).
+
 
 %%%===================================================================
 %%% Public API
@@ -74,8 +77,14 @@ follower(cast, #vote_request{candidate_id=CandidateId}=VoteRequest, #metadata{na
 
 follower(cast, #vote_granted{}, #metadata{name=Name}) ->
     io:format("~p: Received vote in follower state~n", [Name]),
-    keep_state_and_data.
+    {keep_state_and_data, [get_timeout_options()]};
 
+follower(cast, #append_entries{leader_id=LeaderId, entries=Entries}, #metadata{name=Name}) ->
+    case Entries of
+        [] ->
+            io:format("~p: Received heartbeat from ~p~n", [Name, LeaderId]),
+            {keep_state_and_data, [get_timeout_options()]}
+    end.
 
 candidate(timeout, ticker, #metadata{name=Name}=Data) ->
     io:format("~p: starting election~n", [Name]),
@@ -86,10 +95,40 @@ candidate(cast, #vote_request{}, #metadata{name=Name}) ->
     io:format("~p: Received vote request in candidate state~n", [Name]),
     {keep_state_and_data, [get_timeout_options()]};
 
-candidate(cast, #vote_granted{voter_id=Voter}, #metadata{name=Name}) ->
-    io:format("~p: Received vote from ~p~n", [Name, Voter]),
-    {keep_state_and_data, [get_timeout_options()]}.
+candidate(cast,
+          #vote_granted{voter_id=Voter},
+          #metadata{name=Name, nodes=Nodes, votes=Votes}=Data) ->
 
+    UpdatedVotes = lists:append(Votes, [Voter]),
+    case has_majority(length(Nodes), length(UpdatedVotes)) of
+        true ->
+            io:format("~p: Elected as Leader~n", [Name]),
+            {next_state, leader, Data#metadata{votes=UpdatedVotes}, [get_timeout_options(0)]};
+        false ->
+            {keep_state, Data#metadata{votes=UpdatedVotes}, [get_timeout_options()]}
+    end;
+
+candidate(cast, #append_entries{leader_id=LeaderId, entries=Entries}, #metadata{name=Name}) ->
+    case Entries of
+        [] ->
+            io:format("~p: Received heartbeat from ~p in candidate state~n", [Name, LeaderId]),
+            {keep_state_and_data, [get_timeout_options()]}
+    end.
+
+
+leader(timeout, ticker, #metadata{term=Term, name=Name, nodes=Nodes}) ->
+    io:format("~p: Leader timeout, sending Heartbeat~n", [Name]),
+    Heartbeat = #append_entries{term=Term, leader_id=Name},
+    [send_heartbeat(Node, Heartbeat) || Node <- Nodes],
+    {keep_state_and_data, [get_timeout_options()]};
+
+leader(cast, #vote_request{}, #metadata{name=Name}) ->
+    io:format("~p: Received vote request in leader state~n", [Name]),
+    {keep_state_and_data, [get_timeout_options()]};
+
+leader(cast, #vote_granted{}, #metadata{name=Name}) ->
+    io:format("~p: Received vote granted in leader state~n", [Name]),
+    {keep_state_and_data, [get_timeout_options()]}.
 
 
 -spec terminate(Reason :: term(), State :: term(), Data :: term()) ->
@@ -111,11 +150,18 @@ code_change(_OldVsn, State, Data, _Extra) ->
 %%%===================================================================
 
 get_timeout_options() ->
-    get_timeout_options(1500 + rand:uniform(150)).
+    get_timeout_options(2000 + rand:uniform(150)).
 
 get_timeout_options(Time) ->
     {timeout, Time, ticker}.
 
+
+has_majority(LenNodes, LenVotes) when is_integer(LenNodes), is_integer(LenVotes) ->
+    if LenVotes >= LenNodes ->
+            true;
+       LenVotes < LenNodes ->
+            false
+    end.
 
 start_election(#metadata{name=Name, nodes=Nodes, term=Term}) ->
     VoteRequest = #vote_request{term=Term, candidate_id=Name},
@@ -129,3 +175,7 @@ request_vote(Voter, VoteRequest) ->
 send_vote(Name, #vote_request{term=Term, candidate_id=CandidateId}) ->
     VoteGranted = #vote_granted{term=Term, voter_id=Name},
     gen_statem:cast(CandidateId, VoteGranted).
+
+
+send_heartbeat(Node, Heartbeat) ->
+    gen_statem:cast(Node, Heartbeat).
