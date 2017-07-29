@@ -1,4 +1,4 @@
--module(raft_nodes_statem).
+-module(raft).
 
 -behaviour(gen_statem).
 
