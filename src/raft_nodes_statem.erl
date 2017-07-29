@@ -58,10 +58,10 @@ init([Name]) ->
 %% state_name({call,Caller}, _Msg, Data) ->
 %%     {next_state, state_name, Data, [{reply,Caller,ok}]}.
 
-follower(timeout, ticker, #metadata{term=Term, name=Name}=Data) when is_atom(Name) ->
+follower(timeout, ticker, #metadata{name=Name}=Data) when is_atom(Name) ->
     %% Start an election
     io:format("~p: timeout~n", [Name]),
-    {next_state, candidate, Data#metadata{term=Term+1}, [get_timeout_options(0)]};
+    {next_state, candidate, Data, [get_timeout_options(0)]};
 
 follower(cast, #vote_request{candidate_id=CandidateId}=VoteRequest, #metadata{name=Name, voted=Voted}=Data) ->
     io:format("~p: Received vote request from: ~p~n", [Name, CandidateId]),
@@ -93,10 +93,10 @@ follower(cast, #append_entries{leader_id=LeaderId, entries=Entries}, #metadata{n
             {keep_state_and_data, [get_timeout_options()]}
     end.
 
-candidate(timeout, ticker, #metadata{name=Name}=Data) ->
+candidate(timeout, ticker, #metadata{name=Name, term=Term}=Data) ->
     io:format("~p: starting election~n", [Name]),
     start_election(Data),
-    {next_state, candidate, Data, [get_timeout_options()]};
+    {next_state, candidate, Data#metadata{term=Term+1, votes=[Name], voted=true}, [get_timeout_options()]};
 
 candidate(cast, #vote_request{}, #metadata{name=Name}) ->
     io:format("~p: Received vote request in candidate state~n", [Name]),
@@ -107,6 +107,7 @@ candidate(cast,
           #metadata{name=Name, nodes=Nodes, votes=Votes}=Data) ->
 
     UpdatedVotes = lists:append(Votes, [Voter]),
+    io:format("~p: Current votes for candidate ~p~n", [Name, UpdatedVotes]),
     case has_majority(length(Nodes), length(UpdatedVotes)) of
         true ->
             io:format("~p: Elected as Leader~n", [Name]),
