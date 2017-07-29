@@ -98,9 +98,18 @@ candidate(timeout, ticker, #metadata{name=Name, term=Term}=Data) ->
     start_election(Data),
     {next_state, candidate, Data#metadata{term=Term+1, votes=[Name], voted=true}, [get_timeout_options()]};
 
-candidate(cast, #vote_request{}, #metadata{name=Name}) ->
+candidate(cast,
+          #vote_request{candidate_id=CandidateId}=VoteRequest,
+          #metadata{name=Name}=Data) ->
     io:format("~p: Received vote request in candidate state~n", [Name]),
-    {keep_state_and_data, [get_timeout_options()]};
+
+    case should_step_down(VoteRequest, Data) of
+        true ->
+            io:format("~p: Candidate stepping down. Received vote request for a new term from ~p~n", [Name, CandidateId]),
+            {next_state, follower, with_latest_term(VoteRequest, Data), [get_timeout_options()]};
+        false ->
+            {keep_state_and_data, [get_timeout_options()]}
+    end;
 
 candidate(cast,
           #vote_granted{voter_id=Voter},
@@ -189,6 +198,14 @@ with_latest_term(#vote_request{term=CandidateTerm}, #metadata{term=CurrentTerm}=
        CandidateTerm < CurrentTerm ->
             Data
     end.
+
+should_step_down(#vote_request{term=CandidateTerm}, #metadata{term=Term}) ->
+    if CandidateTerm > Term ->
+            true;
+       CandidateTerm =< Term ->
+            false
+    end.
+
 
 request_vote(Voter, VoteRequest) ->
     gen_statem:cast(Voter, VoteRequest).
