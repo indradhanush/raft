@@ -86,11 +86,13 @@ follower(cast, #vote_granted{}, #metadata{name=Name}) ->
     io:format("~p: Received vote in follower state~n", [Name]),
     {keep_state_and_data, [get_timeout_options()]};
 
-follower(cast, #append_entries{leader_id=LeaderId, entries=Entries}, #metadata{name=Name}) ->
+follower(cast,
+         #append_entries{leader_id=LeaderId, entries=Entries},
+         #metadata{name=Name}=Data) ->
     case Entries of
         [] ->
             io:format("~p: Received heartbeat from ~p~n", [Name, LeaderId]),
-            {keep_state_and_data, [get_timeout_options()]}
+            {keep_state, Data#metadata{voted=false}, [get_timeout_options()]}
     end.
 
 candidate(timeout, ticker, #metadata{name=Name, term=Term}=Data) ->
@@ -125,11 +127,13 @@ candidate(cast,
             {keep_state, Data#metadata{votes=UpdatedVotes}, [get_timeout_options()]}
     end;
 
-candidate(cast, #append_entries{leader_id=LeaderId, entries=Entries}, #metadata{name=Name}) ->
+candidate(cast,
+          #append_entries{leader_id=LeaderId, entries=Entries},
+          #metadata{name=Name}=Data) ->
     case Entries of
         [] ->
             io:format("~p: Received heartbeat from ~p in candidate state~n", [Name, LeaderId]),
-            {keep_state_and_data, [get_timeout_options()]}
+            {next_state, follower, Data#metadata{votes=[], voted=false}, [get_timeout_options()]}
     end.
 
 
@@ -139,9 +143,19 @@ leader(timeout, ticker, #metadata{term=Term, name=Name, nodes=Nodes}) ->
     [send_heartbeat(Node, Heartbeat) || Node <- Nodes],
     {keep_state_and_data, [get_timeout_options()]};
 
-leader(cast, #vote_request{}, #metadata{name=Name}) ->
+leader(cast, #vote_request{}=VoteRequest, #metadata{name=Name}=Data) ->
     io:format("~p: Received vote request in leader state~n", [Name]),
-    {keep_state_and_data, [get_timeout_options()]};
+    case should_step_down(VoteRequest, Data) of
+        true ->
+            io:format("~p: Stepped down and voted~n", [Name]),
+            send_vote(Name, VoteRequest),
+            {next_state,
+             follower,
+             with_latest_term(VoteRequest, Data#metadata{votes=[], voted=false}),
+            [get_timeout_options()]};
+        false ->
+            {keep_state_and_data, [get_timeout_options()]}
+    end;
 
 leader(cast, #vote_granted{}, #metadata{name=Name}) ->
     io:format("~p: Received vote granted in leader state~n", [Name]),
