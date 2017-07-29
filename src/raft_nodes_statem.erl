@@ -65,14 +65,21 @@ follower(timeout, ticker, #metadata{term=Term, name=Name}=Data) when is_atom(Nam
 
 follower(cast, #vote_request{candidate_id=CandidateId}=VoteRequest, #metadata{name=Name, voted=Voted}=Data) ->
     io:format("~p: Received vote request from: ~p~n", [Name, CandidateId]),
+
     case Voted of
         true ->
             io:format("~p: Already voted~n", [Name]),
-            {keep_state_and_data, [get_timeout_options()]};
+            {keep_state, with_latest_term(VoteRequest, Data), [get_timeout_options()]};
         false ->
-            send_vote(Name, VoteRequest),
-            io:format("~p: Vote sent to ~p~n", [Name, CandidateId]),
-            {keep_state, Data#metadata{voted=true}, [get_timeout_options()]}
+            IsValidElection = is_valid_election(VoteRequest, Data),
+            case IsValidElection of
+                true ->
+                    send_vote(Name, VoteRequest),
+                    io:format("~p: Vote sent to ~p~n", [Name, CandidateId]);
+                false ->
+                    io:format("~p: Vote denied to ~p~n", [Name, CandidateId])
+            end,
+            {keep_state, with_latest_term(VoteRequest, Data#metadata{voted=IsValidElection}), [get_timeout_options()]}
     end;
 
 follower(cast, #vote_granted{}, #metadata{name=Name}) ->
@@ -167,6 +174,20 @@ start_election(#metadata{name=Name, nodes=Nodes, term=Term}) ->
     VoteRequest = #vote_request{term=Term, candidate_id=Name},
     [request_vote(Voter, VoteRequest) || Voter <- Nodes].
 
+
+is_valid_election(#vote_request{term=CandidateTerm}, #metadata{term=Term}) ->
+    if CandidateTerm >= Term ->
+            true;
+       CandidateTerm < Term ->
+            false
+    end.
+
+with_latest_term(#vote_request{term=CandidateTerm}, #metadata{term=CurrentTerm}=Data) ->
+    if CandidateTerm >= CurrentTerm ->
+            Data#metadata{term=CandidateTerm};
+       CandidateTerm < CurrentTerm ->
+            Data
+    end.
 
 request_vote(Voter, VoteRequest) ->
     gen_statem:cast(Voter, VoteRequest).
