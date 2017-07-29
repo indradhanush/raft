@@ -167,10 +167,10 @@ code_change(_OldVsn, State, Data, _Extra) ->
 %%%===================================================================
 
 get_timeout_options() ->
-    get_timeout_options(2000 + rand:uniform(150)).
+    get_timeout_options(rand:uniform(150)).
 
 get_timeout_options(Time) ->
-    {timeout, Time, ticker}.
+    {timeout, 3000+Time, ticker}.
 
 
 has_majority(LenNodes, LenVotes) when is_integer(LenNodes), is_integer(LenVotes) ->
