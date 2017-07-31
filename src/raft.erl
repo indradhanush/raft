@@ -202,9 +202,9 @@ start_election(#metadata{name=Name, nodes=Nodes, term=Term}) ->
 
 
 is_valid_election(#vote_request{term=CandidateTerm}, #metadata{term=Term}) ->
-    if CandidateTerm >= Term ->
+    if CandidateTerm > Term ->
             true;
-       CandidateTerm < Term ->
+       CandidateTerm =< Term ->
             false
     end.
 
@@ -276,7 +276,7 @@ init_test_() ->
 
 
 follower_setup() ->
-    #metadata{name=n1, nodes=[n2, n3], term=0}.
+    #metadata{name=n1, nodes=[n2, n3], term=5}.
 
 test_follower_timeout(#metadata{term=Term}=Metadata) ->
     {next_state,
@@ -286,8 +286,52 @@ test_follower_timeout(#metadata{term=Term}=Metadata) ->
 
     [assert_timeout_options(TimeoutOptions)].
 
+test_follower_vote_request(#metadata{term=Term}=Metadata) ->
+    VoteRequest = #vote_request{term=Term+1, candidate_id=n2},
+    {keep_state,
+     #metadata{voted=true},
+     [TimeoutOptions]} = follower(cast, VoteRequest, Metadata#metadata{}),
+
+    [assert_timeout_options(TimeoutOptions)].
+
+test_follower_vote_request_with_candidate_older_term(#metadata{term=Term}=Metadata) ->
+    VoteRequest = #vote_request{term=Term, candidate_id=n2},
+    {keep_state,
+     #metadata{voted=false},
+     [TimeoutOptions]} = follower(cast, VoteRequest, Metadata),
+
+    [assert_timeout_options(TimeoutOptions)].
+
+%% TODO: Fundamentally this test is not different than
+%% test_follower_vote_request since we are not checking for send_vote
+%% yet.
+test_follower_vote_request_with_already_voted(#metadata{term=Term}=Metadata) ->
+    VoteRequest = #vote_request{term=Term, candidate_id=n2},
+    {keep_state,
+     #metadata{voted=true},
+     [TimeoutOptions]} = follower(cast, VoteRequest, Metadata#metadata{voted=true}),
+
+    [assert_timeout_options(TimeoutOptions)].
+
+test_follower_vote_granted(#metadata{}=Metadata) ->
+    {keep_state_and_data, [TimeoutOptions]} = follower(cast, #vote_granted{}, Metadata),
+
+    [assert_timeout_options(TimeoutOptions)].
+
 
 follower_test_() ->
-    [{setup, fun follower_setup/0, fun test_follower_timeout/1}].
+    [{"Follower promotes itself to candidate if times out",
+      {setup, fun follower_setup/0, fun test_follower_timeout/1}},
+     {"Follower received a vote request and votes in favour",
+      {setup, fun follower_setup/0, fun test_follower_vote_request/1}},
+     {"Follower received a vote request but candidate has an older term",
+      {setup, fun follower_setup/0, fun test_follower_vote_request_with_candidate_older_term/1}},
+     {"Follower received a vote request but follower has alredy voted",
+      {setup, fun follower_setup/0, fun test_follower_vote_request_with_already_voted/1}},
+     {"Follower received a vote granted but ignores it",
+      {setup, fun follower_setup/0, fun test_follower_vote_granted/1}}
+    ].
+
+
 
 %% -endif.
