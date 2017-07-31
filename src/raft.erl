@@ -234,3 +234,39 @@ send_vote(Name, #vote_request{term=Term, candidate_id=CandidateId}) ->
 
 send_heartbeat(Node, Heartbeat) ->
     gen_statem:cast(Node, Heartbeat).
+
+
+%%%===================================================================
+%% Tests for internal functions
+%%%===================================================================
+
+
+-include_lib("eunit/include/eunit.hrl").
+
+
+test_timeout_value(Timeout) ->
+     ?_assert(Timeout < 3150).
+
+test_get_timeout_options_arity_0() ->
+    {timeout, Timeout, ticker} = get_timeout_options(),
+    test_timeout_value(Timeout).
+
+get_timeout_options_test_() ->
+    [test_get_timeout_options_arity_0(),
+     ?_assertEqual(get_timeout_options(10), {timeout, 3010, ticker})].
+
+
+%%%===================================================================
+%% Tests for state machine callbacks
+%%%===================================================================
+
+test_init_types() ->
+    {ok,
+     follower,
+     #metadata{name=test, nodes=[n1, n2, n3], term=0, votes=[], voted=false},
+     [{timeout, Timeout, ticker}]} = init([test]),
+
+    test_timeout_value(Timeout).
+
+init_test_() ->
+    [test_init_types()].
