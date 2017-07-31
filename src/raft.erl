@@ -9,6 +9,8 @@
 -export([callback_mode/0, init/1, terminate/3, code_change/4]).
 -export([follower/3, candidate/3, leader/3]).
 
+-export([get_timeout_options/0, get_timeout_options/1]).
+
 -define(SERVER, ?MODULE).
 
 -record(metadata, {name, nodes, term, votes = [], voted = false}).
