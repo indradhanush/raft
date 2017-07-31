@@ -107,7 +107,7 @@ candidate(cast,
           #metadata{name=Name}=Data) ->
     io:format("~p: Received vote request in candidate state~n", [Name]),
 
-    case should_step_down(VoteRequest, Data) of
+    case is_valid_election(VoteRequest, Data) of
         true ->
             io:format("~p: Candidate stepping down. Received vote request for a new term from ~p~n", [Name, CandidateId]),
             {next_state, follower, with_latest_term(VoteRequest, Data), [get_timeout_options()]};
@@ -147,7 +147,7 @@ leader(timeout, ticker, #metadata{term=Term, name=Name, nodes=Nodes}) ->
 
 leader(cast, #vote_request{}=VoteRequest, #metadata{name=Name}=Data) ->
     io:format("~p: Received vote request in leader state~n", [Name]),
-    case should_step_down(VoteRequest, Data) of
+    case is_valid_election(VoteRequest, Data) of
         true ->
             io:format("~p: Stepped down and voted~n", [Name]),
             send_vote(Name, VoteRequest),
@@ -201,10 +201,10 @@ start_election(#metadata{name=Name, nodes=Nodes, term=Term}) ->
     [request_vote(Voter, VoteRequest) || Voter <- Nodes].
 
 
-is_valid_election(#vote_request{term=CandidateTerm}, #metadata{term=Term}) ->
-    if CandidateTerm > Term ->
+is_valid_election(#vote_request{term=CandidateTerm}, #metadata{term=CurrentTerm}) ->
+    if CandidateTerm > CurrentTerm ->
             true;
-       CandidateTerm =< Term ->
+       CandidateTerm =< CurrentTerm ->
             false
     end.
 
@@ -214,14 +214,6 @@ with_latest_term(#vote_request{term=CandidateTerm}, #metadata{term=CurrentTerm}=
        CandidateTerm < CurrentTerm ->
             Data
     end.
-
-should_step_down(#vote_request{term=CandidateTerm}, #metadata{term=Term}) ->
-    if CandidateTerm > Term ->
-            true;
-       CandidateTerm =< Term ->
-            false
-    end.
-
 
 request_vote(Voter, VoteRequest) ->
     gen_statem:cast(Voter, VoteRequest).
