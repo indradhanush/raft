@@ -240,16 +240,19 @@ send_heartbeat(Node, Heartbeat) ->
 %% Tests for internal functions
 %%%===================================================================
 
-
+%% -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 
 
-test_timeout_value(Timeout) ->
-     ?_assert(Timeout < 3150).
+assert_timeout_options({timeout, Timeout, ticker}) ->
+    [?_assert(Timeout >= 3000),
+    ?_assert(Timeout < 3150)].
 
 test_get_timeout_options_arity_0() ->
-    {timeout, Timeout, ticker} = get_timeout_options(),
-    test_timeout_value(Timeout).
+    assert_timeout_options(get_timeout_options()).
+
+%% timeout_options() ->
+%%     {timeout, Timeout, ticker}.
 
 get_timeout_options_test_() ->
     [test_get_timeout_options_arity_0(),
@@ -264,9 +267,27 @@ test_init_types() ->
     {ok,
      follower,
      #metadata{name=test, nodes=[n1, n2, n3], term=0, votes=[], voted=false},
-     [{timeout, Timeout, ticker}]} = init([test]),
+     [TimeoutOptions]} = init([test]),
 
-    test_timeout_value(Timeout).
+    assert_timeout_options(TimeoutOptions).
 
 init_test_() ->
     [test_init_types()].
+
+
+follower_setup() ->
+    #metadata{name=n1, nodes=[n2, n3], term=0}.
+
+test_follower_timeout(#metadata{term=Term}=Metadata) ->
+    {next_state,
+     candidate,
+     #metadata{term=Term, votes=[], voted=false},
+     [TimeoutOptions]} = follower(timeout, ticker, Metadata),
+
+    [assert_timeout_options(TimeoutOptions)].
+
+
+follower_test_() ->
+    [{setup, fun follower_setup/0, fun test_follower_timeout/1}].
+
+%% -endif.
