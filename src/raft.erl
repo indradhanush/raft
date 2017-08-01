@@ -67,7 +67,7 @@ follower(timeout, ticker, #metadata{name=Name}=Data) when is_atom(Name) ->
 
 follower(cast, #vote_request{candidate_id=CandidateId}=VoteRequest, #metadata{name=Name, voted_for=null}=Data) ->
     io:format("~p: Received vote request from: ~p~n", [Name, CandidateId]),
-    VotedFor = case can_grant_vote(VoteRequest, Data) of
+    VotedFor = case is_valid_term(VoteRequest, Data) of
                    true ->
                        send_vote(Name, VoteRequest),
                        io:format("~p: Vote sent to ~p~n", [Name, CandidateId]),
@@ -106,7 +106,7 @@ candidate(cast,
           #metadata{name=Name}=Data) ->
     io:format("~p: Received vote request in candidate state~n", [Name]),
 
-    case can_grant_vote(VoteRequest, Data) of
+    case is_valid_term(VoteRequest, Data) of
         true ->
             io:format("~p: Candidate stepping down. Received vote request for a new term from ~p~n", [Name, CandidateId]),
             {next_state, follower, with_latest_term(VoteRequest, Data), [get_timeout_options()]};
@@ -146,7 +146,7 @@ leader(timeout, ticker, #metadata{term=Term, name=Name, nodes=Nodes}) ->
 
 leader(cast, #vote_request{}=VoteRequest, #metadata{name=Name}=Data) ->
     io:format("~p: Received vote request in leader state~n", [Name]),
-    case can_grant_vote(VoteRequest, Data) of
+    case is_valid_term(VoteRequest, Data) of
         true ->
             io:format("~p: Stepped down and voted~n", [Name]),
             send_vote(Name, VoteRequest),
@@ -200,7 +200,7 @@ start_election(#metadata{name=Name, nodes=Nodes, term=Term}) ->
     [request_vote(Voter, VoteRequest) || Voter <- Nodes].
 
 
-can_grant_vote(#vote_request{term=CandidateTerm}, #metadata{term=CurrentTerm}) ->
+is_valid_term(#vote_request{term=CandidateTerm}, #metadata{term=CurrentTerm}) ->
     CandidateTerm > CurrentTerm.
 
 
