@@ -21,6 +21,7 @@
 
 -record(append_entries, {term, leader_id, entries = []}).
 
+-record(append_entries_reply, {term, success}).
 
 %%%===================================================================
 %%% Public API
@@ -88,13 +89,18 @@ follower(cast, #vote_granted{}, #metadata{name=Name}) ->
     {keep_state_and_data, [get_timeout_options()]};
 
 follower(cast,
-         #append_entries{leader_id=LeaderId, entries=Entries},
-         #metadata{name=Name}=Data) ->
-    case Entries of
-        [] ->
-            io:format("~p: Received heartbeat from ~p~n", [Name, LeaderId]),
-            {keep_state, Data#metadata{voted_for=null}, [get_timeout_options()]}
-    end.
+         #append_entries{term=Term, leader_id=LeaderId, entries=[]},
+         #metadata{term=CurrentTerm, name=Name}=Data) ->
+    Success = case is_valid_term(Term, CurrentTerm) of
+                  true ->
+                      io:format("~p: Received heartbeat from ~p~n", [Name, LeaderId]),
+                      true;
+                  false ->
+                      io:format("~p: Received heartbeat from ~p but it has outdated term", [Name, LeaderId]),
+                      false
+    end,
+    send_append_entries_reply(LeaderId, #append_entries_reply{term=CurrentTerm, success=Success}),
+    {keep_state, Data#metadata{voted_for=null}, [get_timeout_options()]}.
 
 candidate(timeout, ticker, #metadata{name=Name, term=Term}=Data) ->
     io:format("~p: starting election~n", [Name]),
@@ -203,6 +209,8 @@ start_election(#metadata{name=Name, nodes=Nodes, term=Term}) ->
 can_grant_vote(#vote_request{term=CandidateTerm}, #metadata{term=CurrentTerm}) ->
     CandidateTerm > CurrentTerm.
 
+is_valid_term(Term, CurrentTerm) ->
+    Term >= CurrentTerm.
 
 with_latest_term(#vote_request{term=CandidateTerm}, #metadata{term=CurrentTerm}=Data) ->
     if CandidateTerm >= CurrentTerm ->
@@ -223,6 +231,9 @@ send_vote(Name, #vote_request{term=Term, candidate_id=CandidateId}) ->
 send_heartbeat(Node, Heartbeat) ->
     gen_statem:cast(Node, Heartbeat).
 
+
+send_append_entries_reply(Node, #append_entries_reply{}=Reply) ->
+    gen_statem:cast(Node, Reply).
 
 %%%===================================================================
 %% Tests for internal functions
@@ -305,6 +316,18 @@ test_follower_vote_granted(#metadata{}=Metadata) ->
 
     [assert_options(Options)].
 
+test_follower_heartbeat_just_after_voting(#metadata{term=Term}=Metadata) ->
+    Result = follower(cast, #append_entries{term=Term+1}, Metadata#metadata{voted_for=n2}),
+    {_, _, Options} = Result,
+
+    [
+     assert_options(Options),
+     ?_assertEqual(
+        {keep_state, #metadata{name=n1, nodes=[n2, n3], term=Term, votes=[], voted_for=null}, Options},
+        Result
+       )
+    ].
+
 
 follower_test_() ->
     [{"Follower promotes itself to candidate if times out",
@@ -316,9 +339,10 @@ follower_test_() ->
      {"Follower received a vote request but follower has already voted",
       {setup, fun follower_setup/0, fun test_follower_vote_request_with_already_voted/1}},
      {"Follower received a vote granted but ignores it",
-      {setup, fun follower_setup/0, fun test_follower_vote_granted/1}}
+      {setup, fun follower_setup/0, fun test_follower_vote_granted/1}},
+     {"Follower received a heartbeat after sending a vote",
+      {setup, fun follower_setup/0, fun test_follower_heartbeat_just_after_voting/1}}
     ].
-
 
 
 %% -endif.
