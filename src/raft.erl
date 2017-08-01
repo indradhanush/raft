@@ -263,12 +263,17 @@ get_timeout_options_test_() ->
 %%%===================================================================
 
 test_init_types() ->
-    {ok,
-     follower,
-     #metadata{name=test, nodes=[n1, n2, n3], term=0, votes=[], voted_for=null},
-     Options} = init([test]),
+    Result = init([test]),
+    {_, _, _, Options} = Result,
 
-    assert_options(Options).
+    [
+     assert_options(Options),
+     ?_assertEqual(
+        {ok, follower, #metadata{name=test, nodes=[n1, n2, n3], term=0, votes=[], voted_for=null}, Options},
+        Result
+       )
+    ].
+
 
 init_test_() ->
     [test_init_types()].
@@ -281,40 +286,61 @@ test_follower_timeout(#metadata{term=Term}=Metadata) ->
     Result = follower(timeout, ticker, Metadata),
     {_, _, _, Options} = Result,
 
-    [assert_options(Options),
+    [
+     assert_options(Options),
      ?_assertEqual(
         {next_state, candidate, #metadata{name=n1, nodes=[n2, n3], term=Term, votes=[], voted_for=null}, Options},
-        Result)
-     ].
+        Result
+       )
+    ].
 
 test_follower_vote_request(#metadata{term=Term}=Metadata) ->
-    VoteRequest = #vote_request{term=Term+1, candidate_id=n2},
-    {keep_state,
-     #metadata{voted_for=n2},
-     Options} = follower(cast, VoteRequest, Metadata#metadata{}),
+    Result = follower(cast, #vote_request{term=Term+1, candidate_id=n2}, Metadata#metadata{}),
+    {_, _, Options} = Result,
 
-    [assert_options(Options)].
+    [
+     assert_options(Options),
+     ?_assertEqual(
+        {keep_state, #metadata{name=n1, nodes=[n2, n3], term=Term+1, votes=[], voted_for=n2}, Options},
+        Result
+       )
+     ].
 
 test_follower_vote_request_with_candidate_older_term(#metadata{term=Term}=Metadata) ->
-    VoteRequest = #vote_request{term=Term, candidate_id=n2},
-    {keep_state,
-     #metadata{voted_for=null},
-     Options} = follower(cast, VoteRequest, Metadata),
+    Result = follower(cast, #vote_request{term=Term, candidate_id=n2}, Metadata),
+    {_, _, Options} = Result,
 
-    [assert_options(Options)].
+    [
+     assert_options(Options),
+     ?_assertEqual(
+        {keep_state, #metadata{name=n1, nodes=[n2, n3], term=Term, voted_for=null}, Options},
+        Result
+       )
+    ].
 
 test_follower_vote_request_with_already_voted(#metadata{term=Term}=Metadata) ->
-    VoteRequest = #vote_request{term=Term, candidate_id=n2},
-    {keep_state,
-     #metadata{voted_for=n3},
-     Options} = follower(cast, VoteRequest, Metadata#metadata{voted_for=n3}),
+    Result = follower(cast, #vote_request{term=Term, candidate_id=n2}, Metadata#metadata{voted_for=n3}),
+    {_, _, Options} = Result,
 
-    [assert_options(Options)].
+    [
+     assert_options(Options),
+     ?_assertEqual(
+        {keep_state, #metadata{name=n1, nodes=[n2, n3], term=Term, voted_for=n3}, Options},
+        Result
+       )
+    ].
 
 test_follower_vote_granted(#metadata{}=Metadata) ->
-    {keep_state_and_data, Options} = follower(cast, #vote_granted{}, Metadata),
+    Result = follower(cast, #vote_granted{}, Metadata),
+    {_, Options} = Result,
 
-    [assert_options(Options)].
+    [
+     assert_options(Options),
+     ?_assertEqual(
+        {keep_state_and_data, Options},
+        Result
+       )
+    ].
 
 test_follower_heartbeat_just_after_voting(#metadata{term=Term}=Metadata) ->
     Result = follower(cast, #append_entries{term=Term+1}, Metadata#metadata{voted_for=n2}),
