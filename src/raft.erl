@@ -364,18 +364,31 @@ test_follower_heartbeat_just_after_voting(#metadata{term=Term}=Metadata) ->
 
 
 follower_test_() ->
-    [{"Follower promotes itself to candidate if times out",
-      {setup, fun follower_setup/0, fun test_follower_timeout/1}},
-     {"Follower received a vote request and votes in favour",
-      {setup, fun follower_setup/0, fun test_follower_vote_request/1}},
-     {"Follower received a vote request but candidate has an older term",
-      {setup, fun follower_setup/0, fun test_follower_vote_request_with_candidate_older_term/1}},
-     {"Follower received a vote request but follower has already voted",
-      {setup, fun follower_setup/0, fun test_follower_vote_request_with_already_voted/1}},
-     {"Follower received a vote granted but ignores it",
-      {setup, fun follower_setup/0, fun test_follower_vote_granted/1}},
-     {"Follower received a heartbeat after sending a vote",
-      {setup, fun follower_setup/0, fun test_follower_heartbeat_just_after_voting/1}}
+    [
+     {
+       "Follower promotes itself to candidate if times out",
+       {setup, fun follower_setup/0, fun test_follower_timeout/1}
+     },
+     {
+       "Follower received a vote request and votes in favour",
+       {setup, fun follower_setup/0, fun test_follower_vote_request/1}
+     },
+     {
+       "Follower received a vote request but candidate has an older term",
+       {setup, fun follower_setup/0, fun test_follower_vote_request_with_candidate_older_term/1}
+     },
+     {
+       "Follower received a vote request but follower has already voted",
+       {setup, fun follower_setup/0, fun test_follower_vote_request_with_already_voted/1}
+     },
+     {
+       "Follower received a vote granted but ignores it",
+       {setup, fun follower_setup/0, fun test_follower_vote_granted/1}
+     },
+     {
+       "Follower received a heartbeat after sending a vote",
+       {setup, fun follower_setup/0, fun test_follower_heartbeat_just_after_voting/1}
+     }
     ].
 
 
