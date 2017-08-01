@@ -13,7 +13,7 @@
 
 -define(SERVER, ?MODULE).
 
--record(metadata, {name, nodes, term, votes = [], voted = false}).
+-record(metadata, {name, nodes, term, votes = [], voted_for = null}).
 
 -record(vote_request, {term, candidate_id}).
 
@@ -65,24 +65,23 @@ follower(timeout, ticker, #metadata{name=Name}=Data) when is_atom(Name) ->
     io:format("~p: timeout~n", [Name]),
     {next_state, candidate, Data, [get_timeout_options(0)]};
 
-follower(cast, #vote_request{candidate_id=CandidateId}=VoteRequest, #metadata{name=Name, voted=Voted}=Data) ->
+follower(cast, #vote_request{candidate_id=CandidateId}=VoteRequest, #metadata{name=Name, voted_for=null}=Data) ->
     io:format("~p: Received vote request from: ~p~n", [Name, CandidateId]),
+    VotedFor = case can_grant_vote(VoteRequest, Data) of
+                   true ->
+                       send_vote(Name, VoteRequest),
+                       io:format("~p: Vote sent to ~p~n", [Name, CandidateId]),
+                       CandidateId;
+                   false ->
+                       io:format("~p: Vote denied to ~p~n", [Name, CandidateId]),
+                       null
+               end,
+    {keep_state, with_latest_term(VoteRequest, Data#metadata{voted_for=VotedFor}), [get_timeout_options()]};
 
-    case Voted of
-        true ->
-            io:format("~p: Already voted~n", [Name]),
-            {keep_state, with_latest_term(VoteRequest, Data), [get_timeout_options()]};
-        false ->
-            IsValidElection = is_valid_election(VoteRequest, Data),
-            case IsValidElection of
-                true ->
-                    send_vote(Name, VoteRequest),
-                    io:format("~p: Vote sent to ~p~n", [Name, CandidateId]);
-                false ->
-                    io:format("~p: Vote denied to ~p~n", [Name, CandidateId])
-            end,
-            {keep_state, with_latest_term(VoteRequest, Data#metadata{voted=IsValidElection}), [get_timeout_options()]}
-    end;
+follower(cast, #vote_request{candidate_id=CandidateId}=VoteRequest, #metadata{name=Name}=Data) ->
+    io:format("~p: Received vote request from: ~p~n", [Name, CandidateId]),
+    io:format("~p: Already voted~n", [Name]),
+    {keep_state, with_latest_term(VoteRequest, Data), [get_timeout_options()]};
 
 follower(cast, #vote_granted{}, #metadata{name=Name}) ->
     io:format("~p: Received vote in follower state~n", [Name]),
@@ -94,20 +93,20 @@ follower(cast,
     case Entries of
         [] ->
             io:format("~p: Received heartbeat from ~p~n", [Name, LeaderId]),
-            {keep_state, Data#metadata{voted=false}, [get_timeout_options()]}
+            {keep_state, Data#metadata{voted_for=null}, [get_timeout_options()]}
     end.
 
 candidate(timeout, ticker, #metadata{name=Name, term=Term}=Data) ->
     io:format("~p: starting election~n", [Name]),
     start_election(Data),
-    {next_state, candidate, Data#metadata{term=Term+1, votes=[Name], voted=true}, [get_timeout_options()]};
+    {next_state, candidate, Data#metadata{term=Term+1, votes=[Name], voted_for=Name}, [get_timeout_options()]};
 
 candidate(cast,
           #vote_request{candidate_id=CandidateId}=VoteRequest,
           #metadata{name=Name}=Data) ->
     io:format("~p: Received vote request in candidate state~n", [Name]),
 
-    case is_valid_election(VoteRequest, Data) of
+    case can_grant_vote(VoteRequest, Data) of
         true ->
             io:format("~p: Candidate stepping down. Received vote request for a new term from ~p~n", [Name, CandidateId]),
             {next_state, follower, with_latest_term(VoteRequest, Data), [get_timeout_options()]};
@@ -135,7 +134,7 @@ candidate(cast,
     case Entries of
         [] ->
             io:format("~p: Received heartbeat from ~p in candidate state~n", [Name, LeaderId]),
-            {next_state, follower, Data#metadata{votes=[], voted=false}, [get_timeout_options()]}
+            {next_state, follower, Data#metadata{votes=[], voted_for=null}, [get_timeout_options()]}
     end.
 
 
@@ -147,13 +146,13 @@ leader(timeout, ticker, #metadata{term=Term, name=Name, nodes=Nodes}) ->
 
 leader(cast, #vote_request{}=VoteRequest, #metadata{name=Name}=Data) ->
     io:format("~p: Received vote request in leader state~n", [Name]),
-    case is_valid_election(VoteRequest, Data) of
+    case can_grant_vote(VoteRequest, Data) of
         true ->
             io:format("~p: Stepped down and voted~n", [Name]),
             send_vote(Name, VoteRequest),
             {next_state,
              follower,
-             with_latest_term(VoteRequest, Data#metadata{votes=[], voted=false}),
+             with_latest_term(VoteRequest, Data#metadata{votes=[], voted_for=null}),
             [get_timeout_options()]};
         false ->
             {keep_state_and_data, [get_timeout_options()]}
@@ -201,12 +200,9 @@ start_election(#metadata{name=Name, nodes=Nodes, term=Term}) ->
     [request_vote(Voter, VoteRequest) || Voter <- Nodes].
 
 
-is_valid_election(#vote_request{term=CandidateTerm}, #metadata{term=CurrentTerm}) ->
-    if CandidateTerm > CurrentTerm ->
-            true;
-       CandidateTerm =< CurrentTerm ->
-            false
-    end.
+can_grant_vote(#vote_request{term=CandidateTerm}, #metadata{term=CurrentTerm}) ->
+    CandidateTerm > CurrentTerm.
+
 
 with_latest_term(#vote_request{term=CandidateTerm}, #metadata{term=CurrentTerm}=Data) ->
     if CandidateTerm >= CurrentTerm ->
@@ -236,12 +232,12 @@ send_heartbeat(Node, Heartbeat) ->
 -include_lib("eunit/include/eunit.hrl").
 
 
-assert_timeout_options({timeout, Timeout, ticker}) ->
+assert_options([{timeout, Timeout, ticker}]) ->
     [?_assert(Timeout >= 3000),
     ?_assert(Timeout < 3150)].
 
 test_get_timeout_options_arity_0() ->
-    assert_timeout_options(get_timeout_options()).
+    assert_options([get_timeout_options()]).
 
 %% timeout_options() ->
 %%     {timeout, Timeout, ticker}.
@@ -258,10 +254,10 @@ get_timeout_options_test_() ->
 test_init_types() ->
     {ok,
      follower,
-     #metadata{name=test, nodes=[n1, n2, n3], term=0, votes=[], voted=false},
-     [TimeoutOptions]} = init([test]),
+     #metadata{name=test, nodes=[n1, n2, n3], term=0, votes=[], voted_for=null},
+     Options} = init([test]),
 
-    assert_timeout_options(TimeoutOptions).
+    assert_options(Options).
 
 init_test_() ->
     [test_init_types()].
@@ -271,44 +267,43 @@ follower_setup() ->
     #metadata{name=n1, nodes=[n2, n3], term=5}.
 
 test_follower_timeout(#metadata{term=Term}=Metadata) ->
-    {next_state,
-     candidate,
-     #metadata{term=Term, votes=[], voted=false},
-     [TimeoutOptions]} = follower(timeout, ticker, Metadata),
+    Result = follower(timeout, ticker, Metadata),
+    {_, _, _, Options} = Result,
 
-    [assert_timeout_options(TimeoutOptions)].
+    [assert_options(Options),
+     ?_assertEqual(
+        {next_state, candidate, #metadata{name=n1, nodes=[n2, n3], term=Term, votes=[], voted_for=null}, Options},
+        Result)
+     ].
 
 test_follower_vote_request(#metadata{term=Term}=Metadata) ->
     VoteRequest = #vote_request{term=Term+1, candidate_id=n2},
     {keep_state,
-     #metadata{voted=true},
-     [TimeoutOptions]} = follower(cast, VoteRequest, Metadata#metadata{}),
+     #metadata{voted_for=n2},
+     Options} = follower(cast, VoteRequest, Metadata#metadata{}),
 
-    [assert_timeout_options(TimeoutOptions)].
+    [assert_options(Options)].
 
 test_follower_vote_request_with_candidate_older_term(#metadata{term=Term}=Metadata) ->
     VoteRequest = #vote_request{term=Term, candidate_id=n2},
     {keep_state,
-     #metadata{voted=false},
-     [TimeoutOptions]} = follower(cast, VoteRequest, Metadata),
+     #metadata{voted_for=null},
+     Options} = follower(cast, VoteRequest, Metadata),
 
-    [assert_timeout_options(TimeoutOptions)].
+    [assert_options(Options)].
 
-%% TODO: Fundamentally this test is not different than
-%% test_follower_vote_request since we are not checking for send_vote
-%% yet.
 test_follower_vote_request_with_already_voted(#metadata{term=Term}=Metadata) ->
     VoteRequest = #vote_request{term=Term, candidate_id=n2},
     {keep_state,
-     #metadata{voted=true},
-     [TimeoutOptions]} = follower(cast, VoteRequest, Metadata#metadata{voted=true}),
+     #metadata{voted_for=n3},
+     Options} = follower(cast, VoteRequest, Metadata#metadata{voted_for=n3}),
 
-    [assert_timeout_options(TimeoutOptions)].
+    [assert_options(Options)].
 
 test_follower_vote_granted(#metadata{}=Metadata) ->
-    {keep_state_and_data, [TimeoutOptions]} = follower(cast, #vote_granted{}, Metadata),
+    {keep_state_and_data, Options} = follower(cast, #vote_granted{}, Metadata),
 
-    [assert_timeout_options(TimeoutOptions)].
+    [assert_options(Options)].
 
 
 follower_test_() ->
@@ -318,7 +313,7 @@ follower_test_() ->
       {setup, fun follower_setup/0, fun test_follower_vote_request/1}},
      {"Follower received a vote request but candidate has an older term",
       {setup, fun follower_setup/0, fun test_follower_vote_request_with_candidate_older_term/1}},
-     {"Follower received a vote request but follower has alredy voted",
+     {"Follower received a vote request but follower has already voted",
       {setup, fun follower_setup/0, fun test_follower_vote_request_with_already_voted/1}},
      {"Follower received a vote granted but ignores it",
       {setup, fun follower_setup/0, fun test_follower_vote_granted/1}}
