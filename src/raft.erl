@@ -102,30 +102,39 @@ follower(cast, #vote_request{candidate_id=CandidateId}=VoteRequest, #metadata{na
                end,
     {keep_state, with_latest_term(VoteRequest, Data#metadata{voted_for=VotedFor}), [get_timeout_options()]};
 
-follower(cast, #vote_request{candidate_id=CandidateId}=VoteRequest, #metadata{}=Data) ->
+follower(
+  cast,
+  #vote_request{term=Term, candidate_id=CandidateId}=VoteRequest,
+  #metadata{name=Name, term=CurrentTerm, voted_for=_VotedFor}=Data
+ ) ->
     log("Received vote request from: ~p, but already voted", Data, [CandidateId]),
-    {keep_state, with_latest_term(VoteRequest, Data), [get_timeout_options()]};
+    UpdatedData = if
+                      Term > CurrentTerm ->
+                          send_vote(Name, VoteRequest),
+                          log("Vote sent to ~p", Data, [CandidateId]),
+                          Data#metadata{term=Term, voted_for=CandidateId};
+                      Term =< CurrentTerm ->
+                          log("Vote denied to ~p, outdated request", Data, [CandidateId]),
+                          Data
+                  end,
+
+    {keep_state, UpdatedData, [get_timeout_options()]};
 
 follower(cast, #vote_granted{}, #metadata{}=Data) ->
-    log("Received vote in follower state", Data, []),
+    log("Received vote in follower state, ignoring", Data, []),
     {keep_state_and_data, [get_timeout_options()]};
 
 follower(cast,
          #append_entries{term=Term, leader_id=LeaderId, entries=[]},
          #metadata{term=CurrentTerm}=Data) ->
 
-    %% The first time a heartbeat is received, votes and voted_for
-    %% should be reset for future elections. But we cannot tell the
-    %% difference between the first heartbeat and the second, so we do
-    %% this every time.
-    UpdatedData = Data#metadata{votes=[], voted_for=null},
     case is_valid_term(Term, CurrentTerm) of
         true ->
             log("Received heartbeat from ~p", Data, [LeaderId]),
-            {keep_state, UpdatedData, [get_timeout_options()]};
+            {keep_state, Data, [get_timeout_options()]};
         false ->
             log("Received heartbeat from ~p but it has outdated term", Data, [LeaderId]),
-            {next_state, candidate, UpdatedData, [get_timeout_options(0)]}
+            {next_state, candidate, Data, [get_timeout_options(0)]}
     end.
 
 candidate(timeout, ticker, #metadata{name=Name, term=Term}=Data) ->
@@ -345,7 +354,7 @@ test_follower_timeout(#metadata{term=Term}=Metadata) ->
        )
     ].
 
-test_follower_vote_request(#metadata{term=Term}=Metadata) ->
+test_follower_vote_request_not_voted_yet(#metadata{term=Term}=Metadata) ->
     Result = follower(cast, #vote_request{term=Term+1, candidate_id=n2}, Metadata#metadata{}),
     {_, _, Options} = Result,
 
@@ -358,13 +367,13 @@ test_follower_vote_request(#metadata{term=Term}=Metadata) ->
      ].
 
 test_follower_vote_request_with_candidate_older_term(#metadata{term=Term}=Metadata) ->
-    Result = follower(cast, #vote_request{term=Term-1, candidate_id=n2}, Metadata),
+    Result = follower(cast, #vote_request{term=Term-1, candidate_id=n2}, Metadata#metadata{voted_for=n3}),
     {_, _, Options} = Result,
 
     [
      assert_options(Options),
      ?_assertEqual(
-        {keep_state, #metadata{name=n1, nodes=[n2, n3], term=Term, voted_for=null}, Options},
+        {keep_state, #metadata{name=n1, nodes=[n2, n3], term=Term, voted_for=n3}, Options},
         Result
        )
     ].
@@ -380,6 +389,18 @@ test_follower_vote_request_with_already_voted(#metadata{term=Term}=Metadata) ->
         Result
        )
     ].
+
+test_follower_vote_request_with_new_term_but_already_voted(#metadata{term=Term}=Metadata) ->
+    Result = follower(cast, #vote_request{term=Term+1, candidate_id=n2}, Metadata#metadata{voted_for=n3}),
+    {_, _, Options} = Result,
+
+    [
+     assert_options(Options),
+     ?_assertEqual(
+        {keep_state, #metadata{name=n1, nodes=[n2, n3], term=Term+1, votes=[], voted_for=n2}, Options},
+        Result
+       )
+     ].
 
 test_follower_vote_granted(#metadata{}=Metadata) ->
     Result = follower(cast, #vote_granted{}, Metadata),
@@ -400,7 +421,7 @@ test_follower_heartbeat_just_after_voting(#metadata{term=Term}=Metadata) ->
     [
      assert_options(Options),
      ?_assertEqual(
-        {keep_state, #metadata{name=n1, nodes=[n2, n3], term=Term, votes=[], voted_for=null}, Options},
+        {keep_state, #metadata{name=n1, nodes=[n2, n3], term=Term, votes=[], voted_for=n2}, Options},
         Result
        )
     ].
@@ -410,7 +431,7 @@ test_follower_heartbeat_with_older_term(#metadata{term=Term}=Metadata) ->
 
     [
      ?_assertEqual(
-        {next_state, candidate, #metadata{name=n1, nodes=[n2, n3], term=Term, votes=[], voted_for=null}, [{timeout, 0, ticker}]},
+        {next_state, candidate, #metadata{name=n1, nodes=[n2, n3], term=Term, votes=[], voted_for=n2}, [{timeout, 0, ticker}]},
         Result
        )
     ].
@@ -422,16 +443,21 @@ follower_test_() ->
        {setup, fun follower_setup/0, fun test_follower_timeout/1}
      },
      {
-       "Follower received a vote request and votes in favour",
-       {setup, fun follower_setup/0, fun test_follower_vote_request/1}
+       "Follower received a vote request but has not voted in yet and votes in favour",
+       {setup, fun follower_setup/0, fun test_follower_vote_request_not_voted_yet/1}
      },
      {
        "Follower received a vote request but candidate has an older term",
        {setup, fun follower_setup/0, fun test_follower_vote_request_with_candidate_older_term/1}
      },
      {
-       "Follower received a vote request but follower has already voted",
+       "Follower received a vote request but follower has already voted for this term",
        {setup, fun follower_setup/0, fun test_follower_vote_request_with_already_voted/1}
+     },
+     {
+       "Follower received a vote request but follower has already voted in the previous term,
+        however, this is a new term and it votes again in favour of the new candidate",
+       {setup, fun follower_setup/0, fun test_follower_vote_request_with_new_term_but_already_voted/1}
      },
      {
        "Follower received a vote granted but ignores it",
