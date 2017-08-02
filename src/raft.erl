@@ -63,7 +63,7 @@ init([Name]) ->
 follower(timeout, ticker, #metadata{name=Name}=Data) when is_atom(Name) ->
     %% Start an election
     io:format("~p: timeout~n", [Name]),
-    {next_state, candidate, Data, [get_timeout_options(0)]};
+    {next_state, candidate, Data#metadata{votes=[], voted_for=null}, [get_timeout_options(0)]};
 
 follower(cast, #vote_request{candidate_id=CandidateId}=VoteRequest, #metadata{name=Name, voted_for=null}=Data) ->
     io:format("~p: Received vote request from: ~p~n", [Name, CandidateId]),
@@ -296,7 +296,7 @@ follower_setup() ->
     #metadata{name=n1, nodes=[n2, n3], term=5}.
 
 test_follower_timeout(#metadata{term=Term}=Metadata) ->
-    Result = follower(timeout, ticker, Metadata),
+    Result = follower(timeout, ticker, Metadata#metadata{voted_for=n2}),
     {_, _, _, Options} = Result,
 
     [
