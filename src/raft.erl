@@ -62,40 +62,39 @@ init([Name]) ->
 
 follower(timeout, ticker, #metadata{name=Name}=Data) when is_atom(Name) ->
     %% Start an election
-    io:format("~p: timeout~n", [Name]),
+    log("timeout", Data, []),
     {next_state, candidate, Data#metadata{votes=[], voted_for=null}, [get_timeout_options(0)]};
 
 follower(cast, #vote_request{candidate_id=CandidateId}=VoteRequest, #metadata{name=Name, voted_for=null}=Data) ->
-    io:format("~p: Received vote request from: ~p~n", [Name, CandidateId]),
+    log("Received vote request from: ~p", Data, [CandidateId]),
     VotedFor = case can_grant_vote(VoteRequest, Data) of
                    true ->
                        send_vote(Name, VoteRequest),
-                       io:format("~p: Vote sent to ~p~n", [Name, CandidateId]),
+                       log("Vote sent to ~p", Data, [CandidateId]),
                        CandidateId;
                    false ->
-                       io:format("~p: Vote denied to ~p~n", [Name, CandidateId]),
+                       log("Vote denied to ~p", Data, [CandidateId]),
                        null
                end,
     {keep_state, with_latest_term(VoteRequest, Data#metadata{voted_for=VotedFor}), [get_timeout_options()]};
 
-follower(cast, #vote_request{candidate_id=CandidateId}=VoteRequest, #metadata{name=Name}=Data) ->
-    io:format("~p: Received vote request from: ~p~n", [Name, CandidateId]),
-    io:format("~p: Already voted~n", [Name]),
+follower(cast, #vote_request{candidate_id=CandidateId}=VoteRequest, #metadata{}=Data) ->
+    log("Received vote request from: ~p, but already voted", Data, [CandidateId]),
     {keep_state, with_latest_term(VoteRequest, Data), [get_timeout_options()]};
 
-follower(cast, #vote_granted{}, #metadata{name=Name}) ->
-    io:format("~p: Received vote in follower state~n", [Name]),
+follower(cast, #vote_granted{}, #metadata{}=Data) ->
+    log("Received vote in follower state", Data, []),
     {keep_state_and_data, [get_timeout_options()]};
 
 follower(cast,
          #append_entries{term=Term, leader_id=LeaderId, entries=[]},
-         #metadata{term=CurrentTerm, name=Name}) ->
+         #metadata{term=CurrentTerm}=Data) ->
     %% TODO: This case is not required. Currently added for logging.
     case is_valid_term(Term, CurrentTerm) of
         true ->
-            io:format("~p: Received heartbeat from ~p~n", [Name, LeaderId]);
+            log("Received heartbeat from ~p", Data, [LeaderId]);
         false ->
-            io:format("~p: Received heartbeat from ~p but it has outdated term", [Name, LeaderId])
+            log("Received heartbeat from ~p but it has outdated term", Data, [LeaderId])
     end,
     {keep_state_and_data, [get_timeout_options()]}.
 
@@ -107,11 +106,11 @@ candidate(timeout, ticker, #metadata{name=Name, term=Term}=Data) ->
 candidate(cast,
           #vote_request{candidate_id=CandidateId}=VoteRequest,
           #metadata{name=Name}=Data) ->
-    io:format("~p: Received vote request in candidate state~n", [Name]),
+    log("Received vote request in candidate state", Data, []),
 
     case can_grant_vote(VoteRequest, Data) of
         true ->
-            io:format("~p: Candidate stepping down. Received vote request for a new term from ~p~n", [Name, CandidateId]),
+            log("Candidate stepping down. Received vote request for a new term from ~p", Data, [CandidateId]),
             send_vote(Name, VoteRequest),
             {
               next_state,
@@ -125,17 +124,17 @@ candidate(cast,
 
 candidate(cast,
           #vote_granted{term=Term, voter_id=Voter},
-          #metadata{name=Name, nodes=Nodes, term=CurrentTerm, votes=Votes}=Data) ->
+          #metadata{nodes=Nodes, term=CurrentTerm, votes=Votes}=Data) ->
 
     case is_valid_term(Term, CurrentTerm) of
         false ->
             {keep_state_and_data, [get_timeout_options()]};
         true ->
             UpdatedVotes = lists:append(Votes, [Voter]),
-            io:format("~p: Current votes for candidate ~p~n", [Name, UpdatedVotes]),
+            log("Current votes for candidate ~p", Data, [UpdatedVotes]),
             case has_majority(UpdatedVotes, Nodes) of
                 true ->
-                    io:format("~p: Elected as Leader~n", [Name]),
+                    log("Elected as Leader", Data, []),
                     {next_state, leader, Data#metadata{votes=UpdatedVotes}, [get_timeout_options(0)]};
                 false ->
                     {keep_state, Data#metadata{votes=UpdatedVotes}, [get_timeout_options()]}
@@ -144,18 +143,18 @@ candidate(cast,
 
 candidate(cast,
           #append_entries{term=Term, leader_id=LeaderId, entries=[]},
-          #metadata{term=CurrentTerm, name=Name}=Data) ->
+          #metadata{term=CurrentTerm}=Data) ->
     case is_valid_term(Term, CurrentTerm) of
         true ->
-            io:format("~p: Received heartbeat from ~p in candidate state with new term. Stepping down~n", [Name, LeaderId]),
+            log("Received heartbeat from ~p in candidate state with new term. Stepping down", Data, [LeaderId]),
             {next_state, follower, Data#metadata{term=Term, votes=[], voted_for=null}, [get_timeout_options()]};
         false ->
             {keep_state_and_data, [get_timeout_options()]}
     end.
 
 
-leader(timeout, ticker, #metadata{term=Term, name=Name, nodes=Nodes}) ->
-    io:format("~p: Leader timeout, sending Heartbeat~n", [Name]),
+leader(timeout, ticker, #metadata{term=Term, name=Name, nodes=Nodes}=Data) ->
+    log("Leader timeout, sending Heartbeat", Data, []),
     Heartbeat = #append_entries{term=Term, leader_id=Name},
     [send_heartbeat(Node, Heartbeat) || Node <- Nodes],
     {keep_state_and_data, [get_timeout_options()]};
@@ -163,10 +162,10 @@ leader(timeout, ticker, #metadata{term=Term, name=Name, nodes=Nodes}) ->
 leader(cast,
        #vote_request{candidate_id=CandidateId}=VoteRequest,
        #metadata{name=Name}=Data) ->
-    io:format("~p: Received vote request in leader state~n", [Name]),
+    log("Received vote request in leader state", Data, []),
     case can_grant_vote(VoteRequest, Data) of
         true ->
-            io:format("~p: Stepped down and voted~n", [Name]),
+            log("Stepped down and voted", Data, []),
             send_vote(Name, VoteRequest),
             {next_state,
              follower,
@@ -176,9 +175,8 @@ leader(cast,
             {keep_state_and_data, [get_timeout_options()]}
     end;
 
-leader(cast, #vote_granted{}, #metadata{name=Name}) ->
-    io:format("~p: Received vote granted in leader state~n", [Name]),
-    {keep_state_and_data, [get_timeout_options()]};
+leader(cast, #vote_granted{}, #metadata{}=Data) ->
+    log("Received vote granted in leader state", Data, []),
 
 leader(cast, #append_entries{term=Term, entries=[]}, #metadata{term=CurrentTerm}=Data) ->
     case is_valid_term(Term, CurrentTerm) of
@@ -213,6 +211,9 @@ get_timeout_options() ->
 get_timeout_options(Time) ->
     {timeout, 3000+Time, ticker}.
 
+log(Message, #metadata{name=Name, term=Term}, Args) ->
+    FormattedMessage = io_lib:format(Message, Args),
+    io:format("[~p Term #~p]: ~s~n", [Name, Term, FormattedMessage]).
 
 has_majority(Votes, Nodes) when is_list(Votes), is_list(Nodes) ->
     length(Votes) >= (length(Nodes) div 2) + 1.
