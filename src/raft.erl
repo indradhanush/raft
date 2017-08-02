@@ -99,9 +99,10 @@ follower(cast,
     {keep_state_and_data, [get_timeout_options()]}.
 
 candidate(timeout, ticker, #metadata{name=Name, term=Term}=Data) ->
-    io:format("~p: starting election~n", [Name]),
-    start_election(Data),
-    {keep_state, Data#metadata{term=Term+1, votes=[Name], voted_for=Name}, [get_timeout_options()]};
+    UpdatedData = Data#metadata{term=Term+1, votes=[Name], voted_for=Name},
+    log("starting election", Data, []),
+    start_election(UpdatedData),
+    {keep_state, UpdatedData, [get_timeout_options()]};
 
 candidate(cast,
           #vote_request{candidate_id=CandidateId}=VoteRequest,
@@ -223,15 +224,16 @@ start_election(#metadata{name=Name, nodes=Nodes, term=Term}) ->
     [request_vote(Voter, VoteRequest) || Voter <- Nodes].
 
 
-can_grant_vote(#vote_request{term=CandidateTerm}, #metadata{term=CurrentTerm}) ->
-    CandidateTerm > CurrentTerm.
+can_grant_vote(#vote_request{term=CandidateTerm}, #metadata{term=CurrentTerm})
+  when is_integer(CandidateTerm), is_integer(CurrentTerm) ->
+    CandidateTerm >= CurrentTerm.
 
 is_valid_term(Term, CurrentTerm) ->
     Term >= CurrentTerm.
 
 with_latest_term(#vote_request{term=CandidateTerm}, #metadata{term=CurrentTerm}=Data) ->
     if CandidateTerm >= CurrentTerm ->
-            Data#metadata{term=CandidateTerm};
+            Data#metadata{term=CandidateTerm, voted_for=null};
        CandidateTerm < CurrentTerm ->
             Data
     end.
