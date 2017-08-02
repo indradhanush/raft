@@ -9,9 +9,15 @@
 -export([callback_mode/0, init/1, terminate/3, code_change/4]).
 -export([follower/3, candidate/3, leader/3]).
 
--export([get_timeout_options/0, get_timeout_options/1]).
-
 -define(SERVER, ?MODULE).
+-define(HEARTBEAT_TIMEOUT, 20).
+
+-ifdef(TEST).
+-define(TIMEOUT_SEED, 3000).
+-else.
+-define(TIMEOUT_SEED, 150).
+-endif.
+
 
 -record(metadata, {name, nodes, term, votes = [], voted_for = null}).
 
@@ -26,10 +32,11 @@
 %%% Public API
 %%%===================================================================
 start() ->
-    raft_nodes_statem:start_link(n1),
-    raft_nodes_statem:start_link(n2),
-    raft_nodes_statem:start_link(n3).
-
+    raft:start_link(n1),
+    raft:start_link(n2),
+    raft:start_link(n3),
+    raft:start_link(n4),
+    raft:start_link(n5).
 
 start_link(Name) ->
     gen_statem:start_link({local, Name}, ?MODULE, [Name], []).
@@ -158,7 +165,7 @@ leader(timeout, ticker, #metadata{term=Term, name=Name, nodes=Nodes}=Data) ->
     log("Leader timeout, sending Heartbeat", Data, []),
     Heartbeat = #append_entries{term=Term, leader_id=Name},
     [send_heartbeat(Node, Heartbeat) || Node <- Nodes],
-    {keep_state_and_data, [get_timeout_options()]};
+    {keep_state_and_data, [get_timeout_options(?HEARTBEAT_TIMEOUT)]};
 
 leader(cast,
        #vote_request{candidate_id=CandidateId}=VoteRequest,
@@ -173,18 +180,19 @@ leader(cast,
              with_latest_term(VoteRequest, Data#metadata{votes=[], voted_for=CandidateId}),
              [get_timeout_options()]};
         false ->
-            {keep_state_and_data, [get_timeout_options()]}
+            {keep_state_and_data, [get_timeout_options(?HEARTBEAT_TIMEOUT)]}
     end;
 
 leader(cast, #vote_granted{}, #metadata{}=Data) ->
     log("Received vote granted in leader state", Data, []),
+    {keep_state_and_data, [get_timeout_options(?HEARTBEAT_TIMEOUT)]};
 
 leader(cast, #append_entries{term=Term, entries=[]}, #metadata{term=CurrentTerm}=Data) ->
     case is_valid_term(Term, CurrentTerm) of
         true ->
             {next_state, follower, Data#metadata{term=Term, votes=[], voted_for=null}, [get_timeout_options()]};
         false ->
-            {keep_state_and_data, [get_timeout_options()]}
+            {keep_state_and_data, [get_timeout_options(?HEARTBEAT_TIMEOUT)]}
     end.
 
 
@@ -207,10 +215,11 @@ code_change(_OldVsn, State, Data, _Extra) ->
 %%%===================================================================
 
 get_timeout_options() ->
-    get_timeout_options(rand:uniform(150)).
+    {timeout, Timeout, ticker} = get_timeout_options(rand:uniform(150)),
+    {timeout, ?TIMEOUT_SEED + Timeout, ticker}.
 
 get_timeout_options(Time) ->
-    {timeout, 3000+Time, ticker}.
+    {timeout, Time, ticker}.
 
 log(Message, #metadata{name=Name, term=Term}, Args) ->
     FormattedMessage = io_lib:format(Message, Args),
@@ -260,7 +269,7 @@ send_heartbeat(Node, Heartbeat) ->
 
 
 assert_options([{timeout, Timeout, ticker}]) ->
-    [?_assert(Timeout >= 3000),
+    [?_assert(Timeout >= ?TIMEOUT_SEED),
     ?_assert(Timeout < 3150)].
 
 test_get_timeout_options_arity_0() ->
