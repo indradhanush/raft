@@ -10,11 +10,20 @@
 -export([follower/3, candidate/3, leader/3]).
 
 -define(SERVER, ?MODULE).
+
+%% The timeout interval after which the leader will send heartbeats.
 -define(HEARTBEAT_TIMEOUT, 20).
+
+%% The maximum timeout for nodes (see TIMEOUT_SEED).
+-define(TIMEOUT_RANGE, 150).
 
 -ifdef(TEST).
 
+%% The minimum timeout range. This combines with TIMEOUT_RANGE to give
+%% a lower and upper limit between random timeouts are generated.
 -define(TIMEOUT_SEED, 150).
+
+%% The list of nodes in the cluster.
 -define(NODES, [n1, n2, n3, n4, n5]).
 
 -else.
@@ -231,7 +240,7 @@ code_change(_OldVsn, State, Data, _Extra) ->
 %%%===================================================================
 
 get_timeout_options() ->
-    {timeout, Timeout, ticker} = get_timeout_options(rand:uniform(150)),
+    {timeout, Timeout, ticker} = get_timeout_options(rand:uniform(?TIMEOUT_RANGE)),
     {timeout, ?TIMEOUT_SEED + Timeout, ticker}.
 
 get_timeout_options(Time) ->
@@ -286,7 +295,7 @@ send_heartbeat(Node, Heartbeat) ->
 
 assert_options([{timeout, Timeout, ticker}]) ->
     [?_assert(Timeout >= ?TIMEOUT_SEED),
-    ?_assert(Timeout < ?TIMEOUT_SEED+150)].
+    ?_assert(Timeout =< ?TIMEOUT_SEED + ?TIMEOUT_RANGE)].
 
 test_get_timeout_options_arity_0() ->
     assert_options([get_timeout_options()]).
