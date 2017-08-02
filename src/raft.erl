@@ -21,7 +21,6 @@
 
 -record(append_entries, {term, leader_id, entries = []}).
 
--record(append_entries_reply, {term, success}).
 
 %%%===================================================================
 %%% Public API
@@ -90,17 +89,15 @@ follower(cast, #vote_granted{}, #metadata{name=Name}) ->
 
 follower(cast,
          #append_entries{term=Term, leader_id=LeaderId, entries=[]},
-         #metadata{term=CurrentTerm, name=Name}=Data) ->
-    Success = case is_valid_term(Term, CurrentTerm) of
-                  true ->
-                      io:format("~p: Received heartbeat from ~p~n", [Name, LeaderId]),
-                      true;
-                  false ->
-                      io:format("~p: Received heartbeat from ~p but it has outdated term", [Name, LeaderId]),
-                      false
+         #metadata{term=CurrentTerm, name=Name}) ->
+    %% TODO: This case is not required. Currently added for logging.
+    case is_valid_term(Term, CurrentTerm) of
+        true ->
+            io:format("~p: Received heartbeat from ~p~n", [Name, LeaderId]);
+        false ->
+            io:format("~p: Received heartbeat from ~p but it has outdated term", [Name, LeaderId])
     end,
-    send_append_entries_reply(LeaderId, #append_entries_reply{term=CurrentTerm, success=Success}),
-    {keep_state, Data#metadata{voted_for=null}, [get_timeout_options()]}.
+    {keep_state_and_data, [get_timeout_options()]}.
 
 candidate(timeout, ticker, #metadata{name=Name, term=Term}=Data) ->
     io:format("~p: starting election~n", [Name]),
@@ -251,9 +248,6 @@ send_heartbeat(Node, Heartbeat) ->
     gen_statem:cast(Node, Heartbeat).
 
 
-send_append_entries_reply(Node, #append_entries_reply{}=Reply) ->
-    gen_statem:cast(Node, Reply).
-
 %%%===================================================================
 %% Tests for internal functions
 %%%===================================================================
@@ -363,12 +357,12 @@ test_follower_vote_granted(#metadata{}=Metadata) ->
 
 test_follower_heartbeat_just_after_voting(#metadata{term=Term}=Metadata) ->
     Result = follower(cast, #append_entries{term=Term+1, leader_id=n2}, Metadata#metadata{voted_for=n2}),
-    {_, _, Options} = Result,
+    {_, Options} = Result,
 
     [
      assert_options(Options),
      ?_assertEqual(
-        {keep_state, #metadata{name=n1, nodes=[n2, n3], term=Term, votes=[], voted_for=null}, Options},
+        {keep_state_and_data, Options},
         Result
        )
     ].
