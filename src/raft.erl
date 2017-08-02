@@ -96,14 +96,20 @@ follower(cast, #vote_granted{}, #metadata{}=Data) ->
 follower(cast,
          #append_entries{term=Term, leader_id=LeaderId, entries=[]},
          #metadata{term=CurrentTerm}=Data) ->
-    %% TODO: This case is not required. Currently added for logging.
+
+    %% The first time a heartbeat is received, votes and voted_for
+    %% should be reset for future elections. But we cannot tell the
+    %% difference between the first heartbeat and the second, so we do
+    %% this every time.
+    UpdatedData = Data#metadata{votes=[], voted_for=null},
     case is_valid_term(Term, CurrentTerm) of
         true ->
-            log("Received heartbeat from ~p", Data, [LeaderId]);
+            log("Received heartbeat from ~p", Data, [LeaderId]),
+            {keep_state, UpdatedData, [get_timeout_options()]};
         false ->
-            log("Received heartbeat from ~p but it has outdated term", Data, [LeaderId])
-    end,
-    {keep_state_and_data, [get_timeout_options()]}.
+            log("Received heartbeat from ~p but it has outdated term", Data, [LeaderId]),
+            {next_state, candidate, UpdatedData, [get_timeout_options(0)]}
+    end.
 
 candidate(timeout, ticker, #metadata{name=Name, term=Term}=Data) ->
     UpdatedData = Data#metadata{term=Term+1, votes=[Name], voted_for=Name},
@@ -371,17 +377,26 @@ test_follower_vote_granted(#metadata{}=Metadata) ->
     ].
 
 test_follower_heartbeat_just_after_voting(#metadata{term=Term}=Metadata) ->
-    Result = follower(cast, #append_entries{term=Term+1, leader_id=n2}, Metadata#metadata{voted_for=n2}),
-    {_, Options} = Result,
+    Result = follower(cast, #append_entries{term=Term, leader_id=n2}, Metadata#metadata{voted_for=n2}),
+    {_, _, Options} = Result,
 
     [
      assert_options(Options),
      ?_assertEqual(
-        {keep_state_and_data, Options},
+        {keep_state, #metadata{name=n1, nodes=[n2, n3], term=Term, votes=[], voted_for=null}, Options},
         Result
        )
     ].
 
+test_follower_heartbeat_with_older_term(#metadata{term=Term}=Metadata) ->
+    Result = follower(cast, #append_entries{term=Term-1, leader_id=n2}, Metadata#metadata{voted_for=n2}),
+
+    [
+     ?_assertEqual(
+        {next_state, candidate, #metadata{name=n1, nodes=[n2, n3], term=Term, votes=[], voted_for=null}, [{timeout, 0, ticker}]},
+        Result
+       )
+    ].
 
 follower_test_() ->
     [
@@ -408,6 +423,10 @@ follower_test_() ->
      {
        "Follower received a heartbeat after sending a vote",
        {setup, fun follower_setup/0, fun test_follower_heartbeat_just_after_voting/1}
+     },
+     {
+       "Follower received a heartbeat but from with an older term and promotes itself to candidate",
+       {setup, fun follower_setup/0, fun test_follower_heartbeat_with_older_term/1}
      }
     ].
 
