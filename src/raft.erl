@@ -127,17 +127,22 @@ candidate(cast,
     end;
 
 candidate(cast,
-          #vote_granted{voter_id=Voter},
-          #metadata{name=Name, nodes=Nodes, votes=Votes}=Data) ->
+          #vote_granted{term=Term, voter_id=Voter},
+          #metadata{name=Name, nodes=Nodes, term=CurrentTerm, votes=Votes}=Data) ->
 
-    UpdatedVotes = lists:append(Votes, [Voter]),
-    io:format("~p: Current votes for candidate ~p~n", [Name, UpdatedVotes]),
-    case has_majority(length(Nodes), length(UpdatedVotes)) of
-        true ->
-            io:format("~p: Elected as Leader~n", [Name]),
-            {next_state, leader, Data#metadata{votes=UpdatedVotes}, [get_timeout_options(0)]};
+    case is_valid_term(Term, CurrentTerm) of
         false ->
-            {keep_state, Data#metadata{votes=UpdatedVotes}, [get_timeout_options()]}
+            {keep_state_and_data, [get_timeout_options()]};
+        true ->
+            UpdatedVotes = lists:append(Votes, [Voter]),
+            io:format("~p: Current votes for candidate ~p~n", [Name, UpdatedVotes]),
+            case has_majority(UpdatedVotes, Nodes) of
+                true ->
+                    io:format("~p: Elected as Leader~n", [Name]),
+                    {next_state, leader, Data#metadata{votes=UpdatedVotes}, [get_timeout_options(0)]};
+                false ->
+                    {keep_state, Data#metadata{votes=UpdatedVotes}, [get_timeout_options()]}
+            end
     end;
 
 candidate(cast,
@@ -202,12 +207,8 @@ get_timeout_options(Time) ->
     {timeout, 3000+Time, ticker}.
 
 
-has_majority(LenNodes, LenVotes) when is_integer(LenNodes), is_integer(LenVotes) ->
-    if LenVotes >= LenNodes ->
-            true;
-       LenVotes < LenNodes ->
-            false
-    end.
+has_majority(Votes, Nodes) when is_list(Votes), is_list(Nodes) ->
+    length(Votes) >= (length(Nodes) div 2) + 1.
 
 start_election(#metadata{name=Name, nodes=Nodes, term=Term}) ->
     VoteRequest = #vote_request{term=Term, candidate_id=Name},
@@ -431,6 +432,47 @@ test_candidate_vote_request_with_newer_term(#metadata{term=Term}=Metadata) ->
        )
     ].
 
+test_candidate_vote_granted_but_no_majority(#metadata{term=Term}=Metadata) ->
+    Result = candidate(cast, #vote_granted{term=Term, voter_id=n2}, Metadata#metadata{nodes=[n2, n3, n4, n5]}),
+    {_, _, Options} = Result,
+
+    [
+     assert_options(Options),
+     ?_assertEqual(
+        {keep_state, #metadata{name=n1, nodes=[n2, n3, n4, n5], term=Term, votes=[n1, n2], voted_for=n1}, Options},
+        Result
+       )
+    ].
+
+test_candidate_vote_granted_with_majority(#metadata{term=Term}=Metadata) ->
+    Result = candidate(
+               cast,
+               #vote_granted{term=Term, voter_id=n3},
+               Metadata#metadata{nodes=[n2, n3, n4, n5], votes=[n1, n2]}
+              ),
+    {_, _, _, Options} = Result,
+
+    [
+     assert_options(Options),
+     ?_assertEqual(
+        {next_state, leader, #metadata{name=n1, nodes=[n2, n3, n4, n5], term=Term, votes=[n1, n2, n3], voted_for=n1}, Options},
+        Result
+       )
+    ].
+
+test_candidate_vote_granted_but_older_term(#metadata{term=Term}=Metadata) ->
+    Result = candidate(cast, #vote_granted{term=Term-1, voter_id=n2}, Metadata),
+    {_, Options} = Result,
+
+    [
+     assert_options(Options),
+     ?_assertEqual(
+        {keep_state_and_data, Options},
+        Result
+       )
+    ].
+
+
 test_candidate_heartbeat_with_older_term(#metadata{term=Term}=Metadata) ->
     Result = candidate(cast, #append_entries{term=Term-1, leader_id=n2}, Metadata),
     {_, Options} = Result,
@@ -478,6 +520,18 @@ candidate_test_() ->
      {
        "Candidate receives a heartbeat with a newer term, steps down to follower",
        {setup, fun candidate_setup/0, fun test_candidate_heartbeat_with_newer_term/1}
+     },
+     {
+       "Candidate receives a vote but has not attained majority and remains a candidate",
+       {setup, fun candidate_setup/0, fun test_candidate_vote_granted_but_no_majority/1}
+     },
+     {
+       "Candidate receives a vote and has attained majority and becomes a leader",
+       {setup, fun candidate_setup/0, fun test_candidate_vote_granted_with_majority/1}
+     },
+     {
+       "Candidate receives a vote and the term is outdated",
+       {setup, fun candidate_setup/0, fun test_candidate_vote_granted_but_older_term/1}
      }
     ].
 
