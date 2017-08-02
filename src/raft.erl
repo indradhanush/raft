@@ -13,9 +13,15 @@
 -define(HEARTBEAT_TIMEOUT, 20).
 
 -ifdef(TEST).
--define(TIMEOUT_SEED, 3000).
--else.
+
 -define(TIMEOUT_SEED, 150).
+-define(NODES, [n1, n2, n3, n4, n5]).
+
+-else.
+
+-define(TIMEOUT_SEED, 3000).
+-define(NODES, [n1, n2, n3, n4, n5]).
+
 -endif.
 
 
@@ -32,11 +38,8 @@
 %%% Public API
 %%%===================================================================
 start() ->
-    raft:start_link(n1),
-    raft:start_link(n2),
-    raft:start_link(n3),
-    raft:start_link(n4),
-    raft:start_link(n5).
+    [raft:start_link(Node) || Node <- ?NODES].
+
 
 start_link(Name) ->
     gen_statem:start_link({local, Name}, ?MODULE, [Name], []).
@@ -51,10 +54,15 @@ callback_mode() -> state_functions.
 -spec init(Args :: term()) ->
                   gen_statem:init_result(atom()).
 init([Name]) ->
-    {ok,
-     follower,
-     #metadata{name=Name, nodes=lists:delete(Name, [n1, n2, n3]), term=0},
-     [get_timeout_options()]}.
+    Nodes = lists:delete(Name, ?NODES),
+    Data = #metadata{name=Name, nodes=Nodes, term=0},
+    log("Initiating with nodes ~p", Data, [Nodes]),
+    {
+      ok,
+      follower,
+      Data,
+      [get_timeout_options()]
+    }.
 
 %% -spec state_name('enter',
 %%                  OldState :: atom(),
@@ -113,7 +121,7 @@ follower(cast,
 
 candidate(timeout, ticker, #metadata{name=Name, term=Term}=Data) ->
     UpdatedData = Data#metadata{term=Term+1, votes=[Name], voted_for=Name},
-    log("starting election", Data, []),
+    log("starting election", UpdatedData, []),
     start_election(UpdatedData),
     {keep_state, UpdatedData, [get_timeout_options()]};
 
@@ -294,13 +302,13 @@ get_timeout_options_test_() ->
 %%%===================================================================
 
 test_init_types() ->
-    Result = init([test]),
+    Result = init([n1]),
     {_, _, _, Options} = Result,
 
     [
      assert_options(Options),
      ?_assertEqual(
-        {ok, follower, #metadata{name=test, nodes=[n1, n2, n3], term=0, votes=[], voted_for=null}, Options},
+        {ok, follower, #metadata{name=n1, nodes=[n2, n3, n4, n5], term=0, votes=[], voted_for=null}, Options},
         Result
        )
     ].
