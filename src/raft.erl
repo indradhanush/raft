@@ -175,10 +175,12 @@ leader(cast,
         true ->
             log("Stepped down and voted", Data, []),
             send_vote(Name, VoteRequest),
-            {next_state,
-             follower,
-             with_latest_term(VoteRequest, Data#metadata{votes=[], voted_for=CandidateId}),
-             [get_timeout_options()]};
+            {
+              next_state,
+              follower,
+              with_latest_term(VoteRequest, Data#metadata{votes=[], voted_for=CandidateId}),
+              [get_timeout_options(?HEARTBEAT_TIMEOUT)]
+            };
         false ->
             {keep_state_and_data, [get_timeout_options(?HEARTBEAT_TIMEOUT)]}
     end;
@@ -190,7 +192,7 @@ leader(cast, #vote_granted{}, #metadata{}=Data) ->
 leader(cast, #append_entries{term=Term, entries=[]}, #metadata{term=CurrentTerm}=Data) ->
     case is_valid_term(Term, CurrentTerm) of
         true ->
-            {next_state, follower, Data#metadata{term=Term, votes=[], voted_for=null}, [get_timeout_options()]};
+            {next_state, follower, Data#metadata{term=Term, votes=[], voted_for=null}, [get_timeout_options(?HEARTBEAT_TIMEOUT)]};
         false ->
             {keep_state_and_data, [get_timeout_options(?HEARTBEAT_TIMEOUT)]}
     end.
@@ -242,7 +244,7 @@ is_valid_term(Term, CurrentTerm) ->
 
 with_latest_term(#vote_request{term=CandidateTerm}, #metadata{term=CurrentTerm}=Data) ->
     if CandidateTerm >= CurrentTerm ->
-            Data#metadata{term=CandidateTerm, voted_for=null};
+            Data#metadata{term=CandidateTerm};
        CandidateTerm < CurrentTerm ->
             Data
     end.
@@ -270,17 +272,15 @@ send_heartbeat(Node, Heartbeat) ->
 
 assert_options([{timeout, Timeout, ticker}]) ->
     [?_assert(Timeout >= ?TIMEOUT_SEED),
-    ?_assert(Timeout < 3150)].
+    ?_assert(Timeout < ?TIMEOUT_SEED+150)].
 
 test_get_timeout_options_arity_0() ->
     assert_options([get_timeout_options()]).
 
-%% timeout_options() ->
-%%     {timeout, Timeout, ticker}.
 
 get_timeout_options_test_() ->
     [test_get_timeout_options_arity_0(),
-     ?_assertEqual(get_timeout_options(10), {timeout, 3010, ticker})].
+     ?_assertEqual(get_timeout_options(10), {timeout, 10, ticker})].
 
 
 %%%===================================================================
@@ -309,12 +309,15 @@ follower_setup() ->
 
 test_follower_timeout(#metadata{term=Term}=Metadata) ->
     Result = follower(timeout, ticker, Metadata#metadata{voted_for=n2}),
-    {_, _, _, Options} = Result,
 
     [
-     assert_options(Options),
      ?_assertEqual(
-        {next_state, candidate, #metadata{name=n1, nodes=[n2, n3], term=Term, votes=[], voted_for=null}, Options},
+        {
+          next_state,
+          candidate,
+          #metadata{name=n1, nodes=[n2, n3], term=Term, votes=[], voted_for=null},
+          [{timeout, 0, ticker}]
+        },
         Result
        )
     ].
@@ -332,7 +335,7 @@ test_follower_vote_request(#metadata{term=Term}=Metadata) ->
      ].
 
 test_follower_vote_request_with_candidate_older_term(#metadata{term=Term}=Metadata) ->
-    Result = follower(cast, #vote_request{term=Term, candidate_id=n2}, Metadata),
+    Result = follower(cast, #vote_request{term=Term-1, candidate_id=n2}, Metadata),
     {_, _, Options} = Result,
 
     [
@@ -466,12 +469,14 @@ test_candidate_vote_granted_with_majority(#metadata{term=Term}=Metadata) ->
                #vote_granted{term=Term, voter_id=n3},
                Metadata#metadata{nodes=[n2, n3, n4, n5], votes=[n1, n2]}
               ),
-    {_, _, _, Options} = Result,
 
     [
-     assert_options(Options),
      ?_assertEqual(
-        {next_state, leader, #metadata{name=n1, nodes=[n2, n3, n4, n5], term=Term, votes=[n1, n2, n3], voted_for=n1}, Options},
+        {
+          next_state, leader,
+          #metadata{name=n1, nodes=[n2, n3, n4, n5], term=Term, votes=[n1, n2, n3], voted_for=n1},
+          [{timeout, 0, ticker}]
+        },
         Result
        )
     ].
@@ -553,80 +558,60 @@ candidate_test_() ->
 leader_setup() ->
     #metadata{name=n1, nodes=[n2, n3], term=7, votes=[n1, n2], voted_for=n1}.
 
+leader_options() ->
+    [{timeout, ?HEARTBEAT_TIMEOUT, ticker}].
+
 test_leader_timeout(#metadata{}=Metadata) ->
     Result = leader(timeout, ticker, Metadata),
-    {_, Options} = Result,
 
     [
-     assert_options(Options),
      ?_assertEqual(
-        {keep_state_and_data, Options},
+        {keep_state_and_data, leader_options()},
         Result)
     ].
 
 test_leader_vote_request_with_older_term(#metadata{term=Term}=Metadata) ->
     Result = leader(cast, #vote_request{term=Term-1, candidate_id=n2}, Metadata),
-    {_, Options} = Result,
 
     [
-     assert_options(Options),
      ?_assertEqual(
-        {keep_state_and_data, Options},
-        Result)
-    ].
-
-test_leader_vote_request_with_same_term(#metadata{term=Term}=Metadata) ->
-    Result = leader(cast, #vote_request{term=Term, candidate_id=n2}, Metadata),
-    {_, Options} = Result,
-
-    [
-     assert_options(Options),
-     ?_assertEqual(
-        {keep_state_and_data, Options},
+        {keep_state_and_data, leader_options()},
         Result)
     ].
 
 test_leader_vote_request_with_newer_term(#metadata{term=Term}=Metadata) ->
     Result = leader(cast, #vote_request{term=Term+1, candidate_id=n2}, Metadata),
-    {_, _, _, Options} = Result,
 
     [
-     assert_options(Options),
      ?_assertEqual(
-        {next_state, follower, #metadata{name=n1, nodes=[n2, n3], term=Term+1, votes=[], voted_for=n2}, Options},
+        {next_state, follower, #metadata{name=n1, nodes=[n2, n3], term=Term+1, votes=[], voted_for=n2}, leader_options()},
         Result)
     ].
 
 test_leader_vote_granted(#metadata{term=Term}=Metadata) ->
     Result = leader(cast, #vote_granted{term=Term, voter_id=n2}, Metadata),
-    {_, Options} = Result,
 
     [
-     assert_options(Options),
      ?_assertEqual(
-        {keep_state_and_data, Options},
+        {keep_state_and_data, leader_options()},
         Result)
     ].
 
 test_leader_heartbeat_with_older_term(#metadata{term=Term}=Metadata) ->
     Result = leader(cast, #append_entries{term=Term-1, leader_id=n2, entries=[]}, Metadata),
-    {_, Options} = Result,
 
     [
-     assert_options(Options),
      ?_assertEqual(
-        {keep_state_and_data, Options},
+        {keep_state_and_data, leader_options()},
         Result)
     ].
 
 test_leader_heartbeat_with_newer_term(#metadata{term=Term}=Metadata) ->
     Result = leader(cast, #append_entries{term=Term+1, leader_id=n2, entries=[]}, Metadata),
-    {_, _, _, Options} = Result,
 
     [
-     assert_options(Options),
      ?_assertEqual(
-        {next_state, follower, #metadata{name=n1, nodes=[n2, n3], term=Term+1, votes=[], voted_for=null}, Options},
+        {next_state, follower, #metadata{name=n1, nodes=[n2, n3], term=Term+1, votes=[], voted_for=null}, leader_options()},
         Result)
     ].
 
@@ -640,10 +625,6 @@ leader_test_() ->
      {
        "Leader receives a vote request but with an older term and ignores the request",
        {setup, fun leader_setup/0, fun test_leader_vote_request_with_older_term/1}
-     },
-     {
-       "Leader receives a vote request but with the same term and ignores the request",
-       {setup, fun leader_setup/0, fun test_leader_vote_request_with_same_term/1}
      },
      {
        "Leader receives a vote request but with the newer term and steps down to follower",
