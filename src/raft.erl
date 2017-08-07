@@ -39,7 +39,8 @@
             nodes,
             term,
             votes = [],
-            voted_for = null
+            voted_for = null,
+            leader_id = null
            }).
 
 -record(vote_request, {term, candidate_id}).
@@ -147,13 +148,14 @@ follower(cast,
     case is_valid_term(Term, CurrentTerm) of
         true ->
             log("Received heartbeat from ~p", Data, [LeaderId]),
-            {keep_state, Data, [get_timeout_options()]};
+            {keep_state, Data#metadata{leader_id=LeaderId}, [get_timeout_options()]};
         false ->
             log("Received heartbeat from ~p but it has outdated term", Data, [LeaderId]),
             {next_state, candidate, Data, [get_timeout_options(0)]}
     end.
 
 candidate(timeout, ticker, #metadata{name=Name, term=Term}=Data) ->
+
     UpdatedData = Data#metadata{term=Term+1, votes=[Name], voted_for=Name},
     log("starting election", UpdatedData, []),
     start_election(UpdatedData),
@@ -205,7 +207,12 @@ candidate(cast,
     case is_valid_term(Term, CurrentTerm) of
         true ->
             log("Received heartbeat from ~p in candidate state with new term. Stepping down", Data, [LeaderId]),
-            {next_state, follower, Data#metadata{term=Term, votes=[], voted_for=null}, [get_timeout_options()]};
+            {
+                next_state,
+                follower,
+                Data#metadata{term=Term, votes=[], voted_for=null, leader_id=LeaderId},
+                [get_timeout_options()]
+            };
         false ->
             {keep_state_and_data, [get_timeout_options()]}
     end.
@@ -240,13 +247,15 @@ leader(cast, #vote_granted{}, #metadata{}=Data) ->
     log("Received vote granted in leader state", Data, []),
     {keep_state_and_data, [get_timeout_options(?HEARTBEAT_TIMEOUT)]};
 
-leader(cast, #append_entries{term=Term, entries=[]}, #metadata{term=CurrentTerm}=Data) ->
+leader(cast,
+       #append_entries{term=Term, leader_id=LeaderId, entries=[]},
+       #metadata{term=CurrentTerm}=Data) ->
     case is_valid_term(Term, CurrentTerm) of
         true ->
             {
                 next_state,
                 follower,
-                Data#metadata{term=Term, votes=[], voted_for=null},
+                Data#metadata{term=Term, votes=[], voted_for=null, leader_id=LeaderId},
                 [get_timeout_options(?HEARTBEAT_TIMEOUT)]
             };
         false ->
@@ -451,12 +460,15 @@ test_follower_vote_granted(#metadata{}=Metadata) ->
      ?_assertEqual(Expected, Result)].
 
 test_follower_heartbeat_just_after_voting(#metadata{term=Term}=Metadata) ->
-    Result = follower(cast, #append_entries{term=Term, leader_id=n2}, Metadata#metadata{voted_for=n2}),
+    Result = follower(cast,
+                      #append_entries{term=Term, leader_id=n2},
+                      Metadata#metadata{voted_for=n2}),
     {_, _, Options} = Result,
 
     Expected = {
         keep_state,
-        #metadata{name=n1, nodes=[n2, n3], term=Term, votes=[], voted_for=n2},
+        #metadata{name=n1, nodes=[n2, n3],
+                  term=Term, votes=[], voted_for=n2, leader_id=n2},
         Options
        },
 
@@ -466,11 +478,11 @@ test_follower_heartbeat_just_after_voting(#metadata{term=Term}=Metadata) ->
 test_follower_heartbeat_with_older_term(#metadata{term=Term}=Metadata) ->
     Result = follower(cast,
                       #append_entries{term=Term-1, leader_id=n2},
-                      Metadata#metadata{voted_for=n2}),
+                      Metadata#metadata{voted_for=n3, leader_id=n3}),
     Expected = {
         next_state,
         candidate,
-        #metadata{name=n1, nodes=[n2, n3], term=Term, votes=[], voted_for=n2},
+        #metadata{name=n1, nodes=[n2, n3], term=Term, votes=[], voted_for=n3, leader_id=n3},
         [{timeout, 0, ticker}]
        },
 
@@ -609,7 +621,7 @@ test_candidate_heartbeat_with_newer_term(#metadata{term=Term}=Metadata) ->
     Expected = {
         next_state,
         follower,
-        #metadata{name=n1, nodes=[n2, n3], term=Term+1, votes=[], voted_for=null},
+        #metadata{name=n1, nodes=[n2, n3], term=Term+1, votes=[], voted_for=null, leader_id=n2},
         Options
        },
 
@@ -709,7 +721,7 @@ test_leader_heartbeat_with_newer_term(#metadata{term=Term}=Metadata) ->
     Expected = {
         next_state,
         follower,
-        #metadata{name=n1, nodes=[n2, n3], term=Term+1, votes=[], voted_for=null},
+        #metadata{name=n1, nodes=[n2, n3], term=Term+1, votes=[], voted_for=null, leader_id=n2},
         leader_options()
        },
 
