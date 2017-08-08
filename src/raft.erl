@@ -339,6 +339,11 @@ start_election(#metadata{name=Name, nodes=Nodes, term=Term}) ->
     [request_vote(Voter, VoteRequest) || Voter <- Nodes].
 
 
+request_vote(Voter, VoteRequest)
+  when is_atom(Voter) ->
+    gen_statem:cast(Voter, VoteRequest).
+
+
 can_grant_vote(#vote_request{term=CandidateTerm}, #metadata{term=CurrentTerm})
   when is_integer(CandidateTerm), is_integer(CurrentTerm) ->
     CandidateTerm >= CurrentTerm.
@@ -352,9 +357,6 @@ with_latest_term(#vote_request{term=CandidateTerm}, #metadata{term=CurrentTerm}=
        CandidateTerm < CurrentTerm ->
             Data
     end.
-
-request_vote(Voter, VoteRequest) ->
-    gen_statem:cast(Voter, VoteRequest).
 
 
 send_vote(Name, #vote_request{term=Term, candidate_id=CandidateId}) ->
