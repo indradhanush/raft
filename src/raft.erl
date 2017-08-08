@@ -22,28 +22,20 @@
 -ifdef(TEST).
 
 %% The minimum timeout range. This combines with TIMEOUT_RANGE to give
-%% a lower and upper limit between random timeouts are generated.
--define(TIMEOUT_SEED, 150).
+%% a lower and upper limit between which random timeouts are
+%% generated.
+-define(TIMEOUT_SEED, 15000000000).
 
 %% The list of nodes in the cluster.
 -define(NODES, [n1, n2, n3, n4, n5]).
 
 -else.
 
--define(TIMEOUT_SEED, 3000).
+-define(TIMEOUT_SEED, 0).
 -define(NODES, [n1, n2, n3, n4, n5]).
 
 -endif.
 
-
--record(metadata, {
-            name,
-            nodes,
-            term,
-            votes = [],
-            voted_for = null,
-            leader_id = null
-           }).
 
 -record(vote_request, {term, candidate_id}).
 
@@ -164,7 +156,10 @@ follower(cast,
 
 follower({call, From}, #client_message{}, #metadata{leader_id=LeaderId}) ->
     Reply = {error, LeaderId},
-    {keep_state_and_data, [get_timeout_options(), {reply, From, Reply}]}.
+    {keep_state_and_data, [get_timeout_options(), {reply, From, Reply}]};
+
+follower(Event, EventContext, Data) ->
+    handle_event(Event, EventContext, Data).
 
 
 candidate(timeout, ticker, #metadata{name=Name, term=Term}=Data) ->
@@ -232,7 +227,10 @@ candidate(cast,
 
 candidate({call, From}, #client_message{}, #metadata{leader_id=LeaderId}) ->
     Reply = {error, LeaderId},
-    {keep_state_and_data, [get_timeout_options(), {reply, From, Reply}]}.
+    {keep_state_and_data, [get_timeout_options(), {reply, From, Reply}]};
+
+candidate(Event, EventContext, Data) ->
+    handle_event(Event, EventContext, Data).
 
 
 leader(timeout, ticker, #metadata{term=Term, name=Name, nodes=Nodes}=Data) ->
@@ -279,9 +277,26 @@ leader(cast,
             {keep_state_and_data, [get_timeout_options(?HEARTBEAT_TIMEOUT)]}
     end;
 
-leader({call, From}, #client_message{}, #metadata{name=Name}) ->
-    Reply = {ok, Name},
-    {keep_state_and_data, [get_timeout_options(), {reply, From, Reply}]}.
+leader({call, From}, #client_message{}, #metadata{}) ->
+    %% TODO: The awesome atom is a place holder to differentiate
+    %% between the response of a follower and candidate from a
+    %% leader. When we implement log replication, this will be the
+    %% index of the log instead. But fear not, we have tests for this
+    %% that assert for awesome being returned which will fail when we
+    %% make the changes here. Win win.
+    Reply = {ok, awesome},
+    {keep_state_and_data, [get_timeout_options(), {reply, From, Reply}]};
+
+leader(Event, EventContext, Data) ->
+    handle_event(Event, EventContext, Data).
+
+
+%% This is required to trigger a manual timeout in our tests since we
+%% use an abnormally high number for timeouts in tests to make things
+%% deterministic and easy to tests. So far we have been unable to find
+%% a way to trigger a timeout manually thus requiring this function.
+handle_event(cast, test_timeout, #metadata{}) ->
+    {keep_state_and_data, [get_timeout_options(0)]}.
 
 
 -spec terminate(
@@ -779,7 +794,7 @@ test_leader_call(#metadata{}=Metadata) ->
     Result = leader({call, client}, #client_message{}, Metadata#metadata{}),
     {_, [TimeoutOptions, _]} = Result,
 
-    Expected = {keep_state_and_data, [TimeoutOptions, {reply, client, {ok, n1}}]},
+    Expected = {keep_state_and_data, [TimeoutOptions, {reply, client, {ok, awesome}}]},
 
     [assert_options([TimeoutOptions]),
      ?_assertEqual(Expected, Result)].
