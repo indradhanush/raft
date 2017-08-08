@@ -1,5 +1,7 @@
 -module(raft).
 
+-include("raft.hrl").
+
 -behaviour(gen_statem).
 
 %% API
@@ -152,7 +154,12 @@ follower(cast,
         false ->
             log("Received heartbeat from ~p but it has outdated term", Data, [LeaderId]),
             {next_state, candidate, Data, [get_timeout_options(0)]}
-    end.
+    end;
+
+follower({call, From}, #client_message{}, #metadata{leader_id=LeaderId}) ->
+    Reply = {error, LeaderId},
+    {keep_state_and_data, [get_timeout_options(), {reply, From, Reply}]}.
+
 
 candidate(timeout, ticker, #metadata{name=Name, term=Term}=Data) ->
 
@@ -215,7 +222,11 @@ candidate(cast,
             };
         false ->
             {keep_state_and_data, [get_timeout_options()]}
-    end.
+    end;
+
+candidate({call, From}, #client_message{}, #metadata{leader_id=LeaderId}) ->
+    Reply = {error, LeaderId},
+    {keep_state_and_data, [get_timeout_options(), {reply, From, Reply}]}.
 
 
 leader(timeout, ticker, #metadata{term=Term, name=Name, nodes=Nodes}=Data) ->
@@ -260,7 +271,11 @@ leader(cast,
             };
         false ->
             {keep_state_and_data, [get_timeout_options(?HEARTBEAT_TIMEOUT)]}
-    end.
+    end;
+
+leader({call, From}, #client_message{}, #metadata{name=Name}) ->
+    Reply = {ok, Name},
+    {keep_state_and_data, [get_timeout_options(), {reply, From, Reply}]}.
 
 
 -spec terminate(
@@ -488,6 +503,16 @@ test_follower_heartbeat_with_older_term(#metadata{term=Term}=Metadata) ->
 
     [?_assertEqual(Expected, Result)].
 
+test_follower_call(#metadata{}=Metadata) ->
+    Result = follower({call, client}, #client_message{}, Metadata#metadata{leader_id=n2}),
+    {_, [TimeoutOptions, _]} = Result,
+
+    Expected = {keep_state_and_data, [TimeoutOptions, {reply, client, {error, n2}}]},
+
+    [assert_options([TimeoutOptions]),
+     ?_assertEqual(Expected, Result)].
+
+
 follower_test_() ->
     [
      {
@@ -522,6 +547,10 @@ follower_test_() ->
      {
          "Follower received a heartbeat but from with an older term and promotes itself to candidate",
          {setup, fun follower_setup/0, fun test_follower_heartbeat_with_older_term/1}
+     },
+     {
+         "Follower replies to a call request with error and leader id",
+         {setup, fun follower_setup/0, fun test_follower_call/1}
      }
     ].
 
@@ -628,6 +657,15 @@ test_candidate_heartbeat_with_newer_term(#metadata{term=Term}=Metadata) ->
     [assert_options(Options),
      ?_assertEqual(Expected, Result)].
 
+test_candidate_call(#metadata{}=Metadata) ->
+    Result = candidate({call, client}, #client_message{}, Metadata#metadata{leader_id=n2}),
+    {_, [TimeoutOptions, _]} = Result,
+
+    Expected = {keep_state_and_data, [TimeoutOptions, {reply, client, {error, n2}}]},
+
+    [assert_options([TimeoutOptions]),
+     ?_assertEqual(Expected, Result)].
+
 
 candidate_test_() ->
     [
@@ -662,6 +700,10 @@ candidate_test_() ->
      {
          "Candidate receives a vote and the term is outdated",
          {setup, fun candidate_setup/0, fun test_candidate_vote_granted_but_older_term/1}
+     },
+     {
+         "Candidate replies to a call request with error and leader id",
+         {setup, fun candidate_setup/0, fun test_candidate_call/1}
      }
     ].
 
@@ -727,6 +769,15 @@ test_leader_heartbeat_with_newer_term(#metadata{term=Term}=Metadata) ->
 
     [?_assertEqual(Expected, Result)].
 
+test_leader_call(#metadata{}=Metadata) ->
+    Result = leader({call, client}, #client_message{}, Metadata#metadata{}),
+    {_, [TimeoutOptions, _]} = Result,
+
+    Expected = {keep_state_and_data, [TimeoutOptions, {reply, client, {ok, n1}}]},
+
+    [assert_options([TimeoutOptions]),
+     ?_assertEqual(Expected, Result)].
+
 
 leader_test_() ->
     [
@@ -753,6 +804,10 @@ leader_test_() ->
      {
          "Leader receives a heartbeat but with a newer term and steps down to follower",
          {setup, fun leader_setup/0, fun test_leader_heartbeat_with_newer_term/1}
+     },
+     {
+         "Leader replies to a call request with ok and leader id",
+         {setup, fun leader_setup/0, fun test_leader_call/1}
      }
     ].
 
