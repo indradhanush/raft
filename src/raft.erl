@@ -5,7 +5,7 @@
 -behaviour(gen_statem).
 
 %% API
--export([start/0, start_link/1]).
+-export([start/0, start_link/1, stop/1, shutdown/0]).
 
 %% gen_statem callbacks
 -export([callback_mode/0, init/1, terminate/3, code_change/4]).
@@ -61,6 +61,12 @@ start() ->
 
 start_link(Name) ->
     gen_statem:start_link({local, Name}, ?MODULE, [Name], []).
+
+stop(Name) ->
+    gen_statem:stop(Name).
+
+shutdown() ->
+    [raft:stop(Node) || Node <- ?NODES].
 
 %%%===================================================================
 %%% gen_statem callbacks
