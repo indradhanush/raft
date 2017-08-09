@@ -6,16 +6,23 @@
 
 -type raft_node() :: #raft_node{}.
 
+
+-record(log_entry, {index, term, command}).
+
+-type log_entry() :: #log_entry{}.
+
+
 -record(metadata, {
             name             :: atom(),
             nodes = []       :: [raft_node()],
             term = 0         :: non_neg_integer(),
             votes = []       :: [atom()],
             voted_for = null :: atom(),
-            leader_id = null :: atom()
+            leader_id = null :: atom(),
+            log = []         :: [log_entry()]
            }).
 
 -type metadata() :: #metadata{}.
 
 
--record(client_message, {}).
+-record(client_message, {command = "" :: string()}).

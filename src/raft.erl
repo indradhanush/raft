@@ -290,15 +290,35 @@ leader(cast,
             {keep_state_and_data, [get_timeout_options(?HEARTBEAT_TIMEOUT)]}
     end;
 
-leader({call, From}, #client_message{}, #metadata{}) ->
+leader({call, From},
+       #client_message{command=Command},
+       #metadata{term=Term, nodes=Nodes, log=Log}=Data) ->
     %% TODO: The awesome atom is a place holder to differentiate
     %% between the response of a follower and candidate from a
     %% leader. When we implement log replication, this will be the
     %% index of the log instead. But fear not, we have tests for this
     %% that assert for awesome being returned which will fail when we
     %% make the changes here. Win win.
+    Index = case Log of
+        [] ->
+            1;
+        _ ->
+            #log_entry{index = LastIndex} = lists:last(Log),
+            LastIndex + 1
+    end,
+
+    NewLogEntry = #log_entry{
+                    index = Index,
+                    term = Term,
+                    command = Command
+                   },
+    UpdatedLog = lists:append(Log, [NewLogEntry]),
+    UpdatedData = Data#metadata{log = UpdatedLog},
+
+    [send_append_entries(Node, UpdatedData) || Node <- Nodes],
+
     Reply = {ok, awesome},
-    {keep_state_and_data, [get_timeout_options(), {reply, From, Reply}]};
+    {keep_state, UpdatedData, [get_timeout_options(), {reply, From, Reply}]};
 
 leader(Event, EventContext, Data) ->
     handle_event(Event, EventContext, Data).
@@ -383,6 +403,10 @@ send_vote(Name, #vote_request{term=Term, candidate_id=CandidateId}) ->
 
 send_heartbeat(#raft_node{name=Name}, Heartbeat) ->
     gen_statem:cast(Name, Heartbeat).
+
+
+send_append_entries(_Node, #metadata{}) ->
+    void.
 
 
 %%%===================================================================
@@ -830,11 +854,24 @@ test_leader_heartbeat_with_newer_term(#metadata{term=Term}=Metadata) ->
 
     [?_assertEqual(Expected, Result)].
 
-test_leader_call(#metadata{}=Metadata) ->
-    Result = leader({call, client}, #client_message{}, Metadata#metadata{}),
-    {_, [TimeoutOptions, _]} = Result,
+test_leader_call(#metadata{term=Term}=Metadata) ->
+    Result = leader({call, client}, #client_message{command = "test"}, Metadata),
+    {_, _, [TimeoutOptions, _]} = Result,
 
-    Expected = {keep_state_and_data, [TimeoutOptions, {reply, client, {ok, awesome}}]},
+    ExpectedMetadata = initial_metadata(),
+    Expected = {
+        keep_state,
+        ExpectedMetadata#metadata{
+            term = Term,
+            votes = [n1, n2],
+            voted_for = n1,
+            log = [#log_entry{
+                      index = 1,
+                      term = Term,
+                      command = "test"
+                     }]
+           },
+        [TimeoutOptions, {reply, client, {ok, awesome}}]},
 
     [assert_options([TimeoutOptions]),
      ?_assertEqual(Expected, Result)].
