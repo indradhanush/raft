@@ -54,7 +54,13 @@
 
 -record(vote_granted, {term, voter_id}).
 
--record(append_entries, {term, leader_id, entries = []}).
+-record(append_entries, {
+            term           :: non_neg_integer(),
+            leader_id      :: atom(),
+            prev_log_index :: non_neg_integer(),
+            prev_log_term  :: non_neg_integer(),
+            entries = []   :: [log_entry()]
+           }).
 
 
 %%%===================================================================
@@ -405,8 +411,28 @@ send_heartbeat(#raft_node{name=Name}, Heartbeat) ->
     gen_statem:cast(Name, Heartbeat).
 
 
-send_append_entries(_Node, #metadata{}) ->
-    void.
+-spec send_append_entries(
+          atom(),
+          log_entry(),
+          [log_entry()],
+          metadata()
+         ) -> ok.
+
+send_append_entries(Node,
+                    #log_entry{index = PrevLogIndex, term = PrevLogTerm},
+                    LogEntries,
+                    #metadata{name = LeaderId, term = Term}) ->
+
+    AppendEntries = #append_entries{
+                         term = Term,
+                         leader_id = LeaderId,
+                         prev_log_index = PrevLogIndex,
+                         prev_log_term = PrevLogTerm,
+                         entries = LogEntries
+                        },
+
+    gen_statem:cast(Node, AppendEntries),
+    ok.
 
 
 %%%===================================================================
