@@ -252,11 +252,44 @@ candidate(Event, EventContext, Data) ->
     handle_event(Event, EventContext, Data).
 
 
-leader(timeout, ticker, #metadata{term=Term, name=Name, nodes=Nodes}=Data) ->
+leader(timeout,
+       ticker,
+       #metadata{term = Term, name = Name, nodes = Nodes, log = Log} = Data) ->
+
     log("Leader timeout, sending Heartbeat", Data, []),
-    Heartbeat = #append_entries{term=Term, leader_id=Name},
+
+    LatestLogEntry = get_latest_log_entry(Log),
+
+    NextIndex = LatestLogEntry#log_entry.index + 1,
+
+    %% If the leader timed out as a result of being elected (candidate
+    %% sets a timeout of 0 when it changes state to leader),
+    %% #raft_node.next_index is initialized to 0. We update that value
+    %% to the index of the LatestLogEntry + 1 ; Or else, the leader
+    %% has been active for some time and we do not want to mess with
+    %% the next_index state it had maintained for each node.
+    %%
+    %% This makes it important that the state is reset when a leader
+    %% steps down and initialized with the default value of next_index
+    %% for each node when a candidate promotes itself to leader.
+    UpdatedNodes = lists:map(
+                       fun(#raft_node{next_index = CurrentNextIndex} = Node) ->
+                           case CurrentNextIndex of
+                               0 -> Node#raft_node{next_index = NextIndex};
+                               _ -> Node
+                           end
+                       end,
+                       Nodes),
+
+    Heartbeat = #append_entries{term = Term, leader_id = Name},
+
     [send_heartbeat(Node, Heartbeat) || Node <- Nodes],
-    {keep_state_and_data, [get_timeout_options(?HEARTBEAT_TIMEOUT)]};
+
+    {
+        keep_state,
+        Data#metadata{nodes = UpdatedNodes},
+        [get_timeout_options(?HEARTBEAT_TIMEOUT)]
+    };
 
 leader(cast,
        #vote_request{candidate_id=CandidateId}=VoteRequest,
@@ -400,6 +433,13 @@ with_latest_term(#vote_request{term=CandidateTerm}, #metadata{term=CurrentTerm}=
        CandidateTerm < CurrentTerm ->
             Data
     end.
+
+-spec get_latest_log_entry([log_entry()]) -> log_entry().
+get_latest_log_entry([]) ->
+    #log_entry{index = 0, term = 0};
+
+get_latest_log_entry(Log) ->
+    lists:last(Log).
 
 
 send_vote(Name, #vote_request{term=Term, candidate_id=CandidateId}) ->
@@ -822,10 +862,21 @@ leader_setup() ->
 leader_options() ->
     [{timeout, ?HEARTBEAT_TIMEOUT, ticker}].
 
-test_leader_timeout(#metadata{}=Metadata) ->
+test_leader_timeout_with_empty_log(#metadata{term = Term} = Metadata) ->
     Result = leader(timeout, ticker, Metadata),
 
-    Expected = {keep_state_and_data, leader_options()},
+    InitialMetadata = initial_metadata(),
+    UpdatedNodes = [
+        Node#raft_node{next_index = 1} || Node <- InitialMetadata#metadata.nodes
+    ],
+    ExpectedMetadata = InitialMetadata#metadata{
+                           term = Term,
+                           nodes = UpdatedNodes,
+                           votes = [n1, n2],
+                           voted_for = n1
+                          },
+
+    Expected = {keep_state, ExpectedMetadata, leader_options()},
 
     [?_assertEqual(Expected, Result)].
 
