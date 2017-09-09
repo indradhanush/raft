@@ -341,35 +341,33 @@ leader(cast,
             {keep_state_and_data, [get_timeout_options(?HEARTBEAT_TIMEOUT)]}
     end;
 
-leader({call, From},
-       #client_message{command=Command},
-       #metadata{term=Term, nodes=Nodes, log=Log}=Data) ->
-    %% TODO: The awesome atom is a place holder to differentiate
-    %% between the response of a follower and candidate from a
-    %% leader. When we implement log replication, this will be the
-    %% index of the log instead. But fear not, we have tests for this
-    %% that assert for awesome being returned which will fail when we
-    %% make the changes here. Win win.
-    Index = case Log of
-        [] ->
-            1;
-        _ ->
-            #log_entry{index = LastIndex} = lists:last(Log),
-            LastIndex + 1
-    end,
+leader(cast,
+       #client_message{command = Command} = ClientMessage,
+       #metadata{
+            term = Term,
+            nodes = Nodes,
+            log = Log,
+            to_reply = ToReply} = Data) ->
 
+    LatestLogEntry = get_latest_log_entry(Log),
     NewLogEntry = #log_entry{
-                    index = Index,
-                    term = Term,
-                    command = Command
-                   },
+                       index = LatestLogEntry#log_entry.index + 1,
+                       term = Term,
+                       command = Command},
+
     UpdatedLog = lists:append(Log, [NewLogEntry]),
-    UpdatedData = Data#metadata{log = UpdatedLog},
+    UpdatedToReply = lists:append(ToReply, [ClientMessage]),
+    UpdatedData = Data#metadata{
+                      log = UpdatedLog,
+                      to_reply = UpdatedToReply},
 
-    [send_append_entries(Node, UpdatedData) || Node <- Nodes],
+    [send_append_entries(Node,
+                         LatestLogEntry,
+                         [NewLogEntry],
+                         UpdatedData)
+     || Node <- Nodes],
 
-    Reply = {ok, awesome},
-    {keep_state, UpdatedData, [get_timeout_options(), {reply, From, Reply}]};
+    {keep_state, UpdatedData, [get_timeout_options()]};
 
 leader(Event, EventContext, Data) ->
     handle_event(Event, EventContext, Data).
