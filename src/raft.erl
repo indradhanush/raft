@@ -222,7 +222,19 @@ candidate(cast,
             case has_majority(UpdatedVotes, Nodes) of
                 true ->
                     log("Elected as Leader", Data, []),
-                    {next_state, leader, Data#metadata{votes=UpdatedVotes}, [get_timeout_options(0)]};
+
+                    %% next_index for each node should be reset to 0
+                    %% when the candidate is promoted as a leader. The
+                    %% leader uses this to set the value of next_index
+                    %% to the immediate next after the last log entry
+                    %% in its log.
+                    UpdatedNodes = [Node#raft_node{next_index = 0} || Node <- Nodes],
+                    {
+                        next_state,
+                        leader,
+                        Data#metadata{votes = UpdatedVotes, nodes = UpdatedNodes},
+                        [get_timeout_options(0)]
+                    };
                 false ->
                     {keep_state, Data#metadata{votes=UpdatedVotes}, [get_timeout_options()]}
             end
