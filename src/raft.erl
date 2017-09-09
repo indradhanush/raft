@@ -173,9 +173,12 @@ follower(cast,
             {next_state, candidate, Data, [get_timeout_options(0)]}
     end;
 
-follower({call, From}, #client_message{}, #metadata{leader_id=LeaderId}) ->
-    Reply = {error, LeaderId},
-    {keep_state_and_data, [get_timeout_options(), {reply, From, Reply}]};
+follower(cast,
+         #client_message{client_id = ClientId},
+         #metadata{leader_id = LeaderId}) ->
+
+    send_leader_info(ClientId, LeaderId),
+    {keep_state_and_data, [get_timeout_options()]};
 
 follower(Event, EventContext, Data) ->
     handle_event(Event, EventContext, Data).
@@ -256,9 +259,12 @@ candidate(cast,
             {keep_state_and_data, [get_timeout_options()]}
     end;
 
-candidate({call, From}, #client_message{}, #metadata{leader_id=LeaderId}) ->
-    Reply = {error, LeaderId},
-    {keep_state_and_data, [get_timeout_options(), {reply, From, Reply}]};
+candidate(cast,
+          #client_message{client_id = ClientId},
+          #metadata{leader_id = LeaderId}) ->
+
+    send_leader_info(ClientId, LeaderId),
+    {keep_state_and_data, [get_timeout_options()]};
 
 candidate(Event, EventContext, Data) ->
     handle_event(Event, EventContext, Data).
@@ -456,6 +462,9 @@ send_vote(Name, #vote_request{term=Term, candidate_id=CandidateId}) ->
     VoteGranted = #vote_granted{term=Term, voter_id=Name},
     gen_statem:cast(CandidateId, VoteGranted).
 
+
+send_leader_info(ClientId, LeaderId) ->
+    gen_statem:cast(ClientId, {error, LeaderId}).
 
 send_heartbeat(#raft_node{name=Name}, Heartbeat) ->
     gen_statem:cast(Name, Heartbeat).
@@ -657,13 +666,16 @@ test_follower_heartbeat_with_older_term(#metadata{term=Term}=Metadata) ->
 
     [?_assertEqual(Expected, Result)].
 
-test_follower_call(#metadata{}=Metadata) ->
-    Result = follower({call, client}, #client_message{}, Metadata#metadata{leader_id=n2}),
-    {_, [TimeoutOptions, _]} = Result,
+test_follower_client_message(#metadata{} = Metadata) ->
+    Result = follower(cast,
+                      #client_message{client_id = test_client},
+                      Metadata#metadata{leader_id = n2}),
 
-    Expected = {keep_state_and_data, [TimeoutOptions, {reply, client, {error, n2}}]},
+    {_, Options} = Result,
 
-    [assert_options([TimeoutOptions]),
+    Expected = {keep_state_and_data, Options},
+
+    [assert_options(Options),
      ?_assertEqual(Expected, Result)].
 
 
@@ -703,8 +715,8 @@ follower_test_() ->
          {setup, fun follower_setup/0, fun test_follower_heartbeat_with_older_term/1}
      },
      {
-         "Follower replies to a call request with error and leader id",
-         {setup, fun follower_setup/0, fun test_follower_call/1}
+         "Follower received a client message and sends a cast back to the client",
+         {setup, fun follower_setup/0, fun test_follower_client_message/1}
      }
     ].
 
@@ -815,13 +827,15 @@ test_candidate_heartbeat_with_newer_term(#metadata{term=Term}=Metadata) ->
     [assert_options(Options),
      ?_assertEqual(Expected, Result)].
 
-test_candidate_call(#metadata{}=Metadata) ->
-    Result = candidate({call, client}, #client_message{}, Metadata#metadata{leader_id=n2}),
-    {_, [TimeoutOptions, _]} = Result,
+test_candidate_client_message(#metadata{} = Metadata) ->
+    Result = candidate(cast,
+                       #client_message{client_id = test_client},
+                       Metadata#metadata{leader_id = n2}),
+    {_, Options} = Result,
 
-    Expected = {keep_state_and_data, [TimeoutOptions, {reply, client, {error, n2}}]},
+    Expected = {keep_state_and_data, Options},
 
-    [assert_options([TimeoutOptions]),
+    [assert_options(Options),
      ?_assertEqual(Expected, Result)].
 
 
@@ -860,8 +874,8 @@ candidate_test_() ->
          {setup, fun candidate_setup/0, fun test_candidate_vote_granted_but_older_term/1}
      },
      {
-         "Candidate replies to a call request with error and leader id",
-         {setup, fun candidate_setup/0, fun test_candidate_call/1}
+         "Candidate received a client message and sends a cast back to the client",
+         {setup, fun candidate_setup/0, fun test_candidate_client_message/1}
      }
     ].
 
