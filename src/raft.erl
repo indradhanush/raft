@@ -367,7 +367,7 @@ leader(cast,
                          UpdatedData)
      || Node <- Nodes],
 
-    {keep_state, UpdatedData, [get_timeout_options()]};
+    {keep_state, UpdatedData, [get_timeout_options(?HEARTBEAT_TIMEOUT)]};
 
 leader(Event, EventContext, Data) ->
     handle_event(Event, EventContext, Data).
@@ -468,7 +468,7 @@ send_heartbeat(#raft_node{name=Name}, Heartbeat) ->
           metadata()
          ) -> ok.
 
-send_append_entries(Node,
+send_append_entries(#raft_node{name = Name},
                     #log_entry{index = PrevLogIndex, term = PrevLogTerm},
                     LogEntries,
                     #metadata{name = LeaderId, term = Term}) ->
@@ -481,7 +481,7 @@ send_append_entries(Node,
                          entries = LogEntries
                         },
 
-    gen_statem:cast(Node, AppendEntries),
+    gen_statem:cast(Name, AppendEntries),
     ok.
 
 
@@ -941,9 +941,16 @@ test_leader_heartbeat_with_newer_term(#metadata{term=Term}=Metadata) ->
 
     [?_assertEqual(Expected, Result)].
 
-test_leader_call(#metadata{term=Term}=Metadata) ->
-    Result = leader({call, client}, #client_message{command = "test"}, Metadata),
-    {_, _, [TimeoutOptions, _]} = Result,
+test_leader_client_message(#metadata{term = Term} = Metadata) ->
+    ClientMessage = #client_message{
+                         client_id = test_client,
+                         message_id = "unique-message-id",
+                         command = "test"
+                        },
+
+    Result = leader(cast,
+                    ClientMessage,
+                    Metadata),
 
     ExpectedMetadata = initial_metadata(),
     Expected = {
@@ -956,19 +963,20 @@ test_leader_call(#metadata{term=Term}=Metadata) ->
                       index = 1,
                       term = Term,
                       command = "test"
-                     }]
+                     }],
+            to_reply = [ClientMessage]
            },
-        [TimeoutOptions, {reply, client, {ok, awesome}}]},
+        leader_options()
+       },
 
-    [assert_options([TimeoutOptions]),
-     ?_assertEqual(Expected, Result)].
+    [?_assertEqual(Expected, Result)].
 
 
 leader_test_() ->
     [
      {
-         "Leader times out and sends heartbeats",
-         {setup, fun leader_setup/0, fun test_leader_timeout/1}
+         "Leader times out and sends heartbeats with an empty log",
+         {setup, fun leader_setup/0, fun test_leader_timeout_with_empty_log/1}
      },
      {
          "Leader receives a vote request but with an older term and ignores the request",
@@ -991,8 +999,8 @@ leader_test_() ->
          {setup, fun leader_setup/0, fun test_leader_heartbeat_with_newer_term/1}
      },
      {
-         "Leader replies to a call request with ok and leader id",
-         {setup, fun leader_setup/0, fun test_leader_call/1}
+         "Leader receives a client message and sends append entries RPCs and updates its log",
+         {setup, fun leader_setup/0, fun test_leader_client_message/1}
      }
     ].
 
