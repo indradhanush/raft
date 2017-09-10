@@ -37,7 +37,7 @@
 
 -else.
 
--define(TIMEOUT_SEED, 0).
+-define(TIMEOUT_SEED, 150).
 
 -define(NODES, [
                 #raft_node{name=n1},
@@ -142,7 +142,7 @@ follower(cast,
 follower(cast,
          #vote_request{term=Term, candidate_id=CandidateId}=VoteRequest,
          #metadata{name=Name, term=CurrentTerm, voted_for=_VotedFor}=Data) ->
-    log("Received vote request from: ~p, but already voted", Data, [CandidateId]),
+    log("Received vote request from: ~p for term: ~p", Data, [CandidateId, Term]),
     UpdatedData = if
                       Term > CurrentTerm ->
                           send_vote(Name, VoteRequest),
