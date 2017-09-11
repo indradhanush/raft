@@ -174,6 +174,11 @@ follower(cast,
     end;
 
 follower(cast,
+         #append_entries{},
+         #metadata{}) ->
+    {keep_state_and_data, [get_timeout_options()]};
+
+follower(cast,
          #client_message{} = ClientMessage,
          #metadata{} = Data) ->
 
@@ -258,6 +263,11 @@ candidate(cast,
         false ->
             {keep_state_and_data, [get_timeout_options()]}
     end;
+
+candidate(cast,
+          #append_entries{},
+          #metadata{}) ->
+    {keep_state_and_data, [get_timeout_options()]};
 
 candidate(cast,
           #client_message{} = ClientMessage,
@@ -373,6 +383,8 @@ leader(cast,
                          UpdatedData)
      || Node <- Nodes],
 
+    send_response_to_client(ClientMessage, Data),
+
     {keep_state, UpdatedData, [get_timeout_options(?HEARTBEAT_TIMEOUT)]};
 
 leader(Event, EventContext, Data) ->
@@ -471,6 +483,10 @@ send_leader_info(#client_message{client_id = To, message_id = MessageId},
 send_heartbeat(#raft_node{name=Name}, Heartbeat) ->
     gen_statem:cast(Name, Heartbeat).
 
+
+send_response_to_client(#client_message{client_id = To, message_id = MessageId},
+                        #metadata{name = From}) ->
+    To ! {ok, From, MessageId}.
 
 -spec send_append_entries(
           atom(),
@@ -959,7 +975,7 @@ test_leader_heartbeat_with_newer_term(#metadata{term=Term}=Metadata) ->
 
 test_leader_client_message(#metadata{term = Term} = Metadata) ->
     ClientMessage = #client_message{
-                         client_id = test_client,
+                         client_id = self(),
                          message_id = "unique-message-id",
                          command = "test"
                         },
