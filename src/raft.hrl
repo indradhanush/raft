@@ -13,7 +13,7 @@
 
 
 -record(client_message, {
-            client_id    :: atom(),
+            client_id    :: pid(),
             message_id   :: string(),
             command = "" :: string()
            }).

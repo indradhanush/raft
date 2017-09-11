@@ -174,10 +174,10 @@ follower(cast,
     end;
 
 follower(cast,
-         #client_message{client_id = ClientId},
-         #metadata{leader_id = LeaderId}) ->
+         #client_message{} = ClientMessage,
+         #metadata{} = Data) ->
 
-    send_leader_info(ClientId, LeaderId),
+    send_leader_info(ClientMessage, Data),
     {keep_state_and_data, [get_timeout_options()]};
 
 follower(Event, EventContext, Data) ->
@@ -260,10 +260,10 @@ candidate(cast,
     end;
 
 candidate(cast,
-          #client_message{client_id = ClientId},
-          #metadata{leader_id = LeaderId}) ->
+          #client_message{} = ClientMessage,
+          #metadata{} = Data) ->
 
-    send_leader_info(ClientId, LeaderId),
+    send_leader_info(ClientMessage, Data),
     {keep_state_and_data, [get_timeout_options()]};
 
 candidate(Event, EventContext, Data) ->
@@ -463,8 +463,10 @@ send_vote(Name, #vote_request{term=Term, candidate_id=CandidateId}) ->
     gen_statem:cast(CandidateId, VoteGranted).
 
 
-send_leader_info(ClientId, LeaderId) ->
-    gen_statem:cast(ClientId, {error, LeaderId}).
+send_leader_info(#client_message{client_id = To, message_id = MessageId},
+                 #metadata{name = From, leader_id = LeaderId}) ->
+    io:format("Sending leader info to client"),
+    To ! {error, From, MessageId, LeaderId}.
 
 send_heartbeat(#raft_node{name=Name}, Heartbeat) ->
     gen_statem:cast(Name, Heartbeat).
@@ -668,7 +670,7 @@ test_follower_heartbeat_with_older_term(#metadata{term=Term}=Metadata) ->
 
 test_follower_client_message(#metadata{} = Metadata) ->
     Result = follower(cast,
-                      #client_message{client_id = test_client},
+                      #client_message{client_id = self()},
                       Metadata#metadata{leader_id = n2}),
 
     {_, Options} = Result,
@@ -829,7 +831,7 @@ test_candidate_heartbeat_with_newer_term(#metadata{term=Term}=Metadata) ->
 
 test_candidate_client_message(#metadata{} = Metadata) ->
     Result = candidate(cast,
-                       #client_message{client_id = test_client},
+                       #client_message{client_id = self()},
                        Metadata#metadata{leader_id = n2}),
     {_, Options} = Result,
 
