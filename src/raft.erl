@@ -28,11 +28,11 @@
 
 %% The list of nodes in the cluster.
 -define(NODES, [
-                #raft_node{name=n1},
-                #raft_node{name=n2},
-                #raft_node{name=n3},
-                #raft_node{name=n4},
-                #raft_node{name=n5}
+                #raft_node{name = n1},
+                #raft_node{name = n2},
+                #raft_node{name = n3},
+                #raft_node{name = n4},
+                #raft_node{name = n5}
                ]).
 
 -else.
@@ -40,11 +40,11 @@
 -define(TIMEOUT_SEED, 150).
 
 -define(NODES, [
-                #raft_node{name=n1},
-                #raft_node{name=n2},
-                #raft_node{name=n3},
-                #raft_node{name=n4},
-                #raft_node{name=n5}
+                #raft_node{name = n1},
+                #raft_node{name = n2},
+                #raft_node{name = n3},
+                #raft_node{name = n4},
+                #raft_node{name = n5}
                ]).
 
 -endif.
@@ -73,7 +73,7 @@
 %%% Public API
 %%%===================================================================
 start() ->
-    [raft:start_link(Name) || #raft_node{name=Name} <- ?NODES].
+    [raft:start_link(Name) || #raft_node{name = Name} <- ?NODES].
 
 
 start_link(Name) ->
@@ -83,7 +83,7 @@ stop(Name) ->
     gen_statem:stop(Name).
 
 shutdown() ->
-    [raft:stop(Name) || #raft_node{name=Name} <- ?NODES].
+    [raft:stop(Name) || #raft_node{name = Name} <- ?NODES].
 
 %%%===================================================================
 %%% gen_statem callbacks
@@ -95,7 +95,7 @@ callback_mode() -> state_functions.
 -spec init(Args :: term()) ->
                   gen_statem:init_result(atom()).
 init([Name]) ->
-    Nodes = lists:delete(#raft_node{name=Name}, ?NODES),
+    Nodes = lists:delete(#raft_node{name = Name}, ?NODES),
     Data = create_metadata(Name, Nodes),
     log("Initiating with nodes ~p", Data, [Nodes]),
     {
@@ -116,19 +116,19 @@ init([Name]) ->
 %% state_name({call,Caller}, _Msg, Data) ->
 %%     {next_state, state_name, Data, [{reply,Caller,ok}]}.
 
-follower(timeout, ticker, #metadata{name=Name}=Data) when is_atom(Name) ->
+follower(timeout, ticker, #metadata{name = Name} = Data) when is_atom(Name) ->
     %% Start an election
     log("timeout", Data, []),
     {
         next_state,
         candidate,
-        Data#metadata{votes=[], voted_for=null},
+        Data#metadata{votes = [], voted_for = null},
         [get_timeout_options(0)]
     };
 
 follower(cast,
-         #vote_request{candidate_id=CandidateId}=VoteRequest,
-         #metadata{name=Name, voted_for=null}=Data) ->
+         #vote_request{candidate_id = CandidateId} = VoteRequest,
+         #metadata{name = Name, voted_for = null} = Data) ->
     log("Received vote request from: ~p", Data, [CandidateId]),
     VotedFor = case can_grant_vote(VoteRequest, Data) of
                    true ->
@@ -141,19 +141,19 @@ follower(cast,
                end,
     {
         keep_state,
-        with_latest_term(VoteRequest, Data#metadata{voted_for=VotedFor}),
+        with_latest_term(VoteRequest, Data#metadata{voted_for = VotedFor}),
         [get_timeout_options()]
     };
 
 follower(cast,
-         #vote_request{term=Term, candidate_id=CandidateId}=VoteRequest,
-         #metadata{name=Name, term=CurrentTerm, voted_for=_VotedFor}=Data) ->
+         #vote_request{term = Term, candidate_id = CandidateId} = VoteRequest,
+         #metadata{name = Name, term = CurrentTerm, voted_for = _VotedFor} = Data) ->
     log("Received vote request from: ~p for term: ~p", Data, [CandidateId, Term]),
     UpdatedData = if
                       Term > CurrentTerm ->
                           send_vote(Name, VoteRequest),
                           log("Vote sent to ~p", Data, [CandidateId]),
-                          Data#metadata{term=Term, voted_for=CandidateId};
+                          Data#metadata{term = Term, voted_for = CandidateId};
                       Term =< CurrentTerm ->
                           log("Vote denied to ~p, outdated request",
                               Data, [CandidateId]),
@@ -162,20 +162,21 @@ follower(cast,
 
     {keep_state, UpdatedData, [get_timeout_options()]};
 
-follower(cast, #vote_granted{}, #metadata{}=Data) ->
+follower(cast, #vote_granted{}, #metadata{} = Data) ->
     log("Received vote in follower state, ignoring", Data, []),
     {keep_state_and_data, [get_timeout_options()]};
 
 follower(cast,
-         #append_entries{term=Term, leader_id=LeaderId, entries=[]},
-         #metadata{term=CurrentTerm}=Data) ->
+         #append_entries{term = Term, leader_id = LeaderId, entries = []},
+         #metadata{term = CurrentTerm} = Data) ->
 
     case is_valid_term(Term, CurrentTerm) of
         true ->
             log("Received heartbeat from ~p", Data, [LeaderId]),
-            {keep_state, Data#metadata{leader_id=LeaderId}, [get_timeout_options()]};
+            {keep_state, Data#metadata{leader_id = LeaderId}, [get_timeout_options()]};
         false ->
-            log("Received heartbeat from ~p but it has outdated term", Data, [LeaderId]),
+            log("Received heartbeat from ~p but it has outdated term",
+                Data, [LeaderId]),
             {next_state, candidate, Data, [get_timeout_options(0)]}
     end;
 
@@ -195,16 +196,16 @@ follower(Event, EventContext, Data) ->
     handle_event(Event, EventContext, Data).
 
 
-candidate(timeout, ticker, #metadata{name=Name, term=Term}=Data) ->
+candidate(timeout, ticker, #metadata{name = Name, term = Term} = Data) ->
 
-    UpdatedData = Data#metadata{term=Term+1, votes=[Name], voted_for=Name},
+    UpdatedData = Data#metadata{term = Term+1, votes = [Name], voted_for = Name},
     log("starting election", UpdatedData, []),
     start_election(UpdatedData),
     {keep_state, UpdatedData, [get_timeout_options()]};
 
 candidate(cast,
-          #vote_request{candidate_id=CandidateId}=VoteRequest,
-          #metadata{name=Name}=Data) ->
+          #vote_request{candidate_id = CandidateId} = VoteRequest,
+          #metadata{name = Name} = Data) ->
     log("Received vote request in candidate state", Data, []),
 
     case can_grant_vote(VoteRequest, Data) of
@@ -216,7 +217,7 @@ candidate(cast,
                 next_state,
                 follower,
                 with_latest_term(VoteRequest,
-                                 Data#metadata{votes=[], voted_for=CandidateId}),
+                                 Data#metadata{votes = [], voted_for = CandidateId}),
                 [get_timeout_options()]
             };
         false ->
@@ -224,8 +225,8 @@ candidate(cast,
     end;
 
 candidate(cast,
-          #vote_granted{term=Term, voter_id=Voter},
-          #metadata{nodes=Nodes, term=CurrentTerm, votes=Votes}=Data) ->
+          #vote_granted{term = Term, voter_id = Voter},
+          #metadata{nodes = Nodes, term = CurrentTerm, votes = Votes} = Data) ->
 
     case is_valid_term(Term, CurrentTerm) of
         false ->
@@ -250,20 +251,30 @@ candidate(cast,
                         [get_timeout_options(0)]
                     };
                 false ->
-                    {keep_state, Data#metadata{votes=UpdatedVotes}, [get_timeout_options()]}
+                    {
+                        keep_state,
+                        Data#metadata{votes = UpdatedVotes},
+                        [get_timeout_options()]
+                    }
             end
     end;
 
 candidate(cast,
-          #append_entries{term=Term, leader_id=LeaderId, entries=[]},
-          #metadata{term=CurrentTerm}=Data) ->
+          #append_entries{term = Term, leader_id = LeaderId, entries = []},
+          #metadata{term = CurrentTerm} = Data) ->
     case is_valid_term(Term, CurrentTerm) of
         true ->
-            log("Received heartbeat from ~p in candidate state with new term. Stepping down", Data, [LeaderId]),
+            log("Received heartbeat from ~p in candidate state with new term."
+                " Stepping down", Data, [LeaderId]),
             {
                 next_state,
                 follower,
-                Data#metadata{term=Term, votes=[], voted_for=null, leader_id=LeaderId},
+                Data#metadata{
+                    term = Term,
+                    votes = [],
+                    voted_for = null,
+                    leader_id = LeaderId
+                   },
                 [get_timeout_options()]
             };
         false ->
@@ -326,8 +337,8 @@ leader(timeout,
     };
 
 leader(cast,
-       #vote_request{candidate_id=CandidateId}=VoteRequest,
-       #metadata{name=Name}=Data) ->
+       #vote_request{candidate_id = CandidateId} = VoteRequest,
+       #metadata{name = Name} = Data) ->
     log("Received vote request in leader state", Data, []),
     case can_grant_vote(VoteRequest, Data) of
         true ->
@@ -337,26 +348,31 @@ leader(cast,
                 next_state,
                 follower,
                 with_latest_term(VoteRequest,
-                                 Data#metadata{votes=[], voted_for=CandidateId}),
+                                 Data#metadata{votes = [], voted_for = CandidateId}),
                 [get_timeout_options(?HEARTBEAT_TIMEOUT)]
             };
         false ->
             {keep_state_and_data, [get_timeout_options(?HEARTBEAT_TIMEOUT)]}
     end;
 
-leader(cast, #vote_granted{}, #metadata{}=Data) ->
+leader(cast, #vote_granted{}, #metadata{} = Data) ->
     log("Received vote granted in leader state", Data, []),
     {keep_state_and_data, [get_timeout_options(?HEARTBEAT_TIMEOUT)]};
 
 leader(cast,
-       #append_entries{term=Term, leader_id=LeaderId, entries=[]},
-       #metadata{term=CurrentTerm}=Data) ->
+       #append_entries{term = Term, leader_id = LeaderId, entries = []},
+       #metadata{term = CurrentTerm} = Data) ->
     case is_valid_term(Term, CurrentTerm) of
         true ->
             {
                 next_state,
                 follower,
-                Data#metadata{term=Term, votes=[], voted_for=null, leader_id=LeaderId},
+                Data#metadata{
+                    term = Term,
+                    votes = [],
+                    voted_for = null,
+                    leader_id = LeaderId
+                   },
                 [get_timeout_options(?HEARTBEAT_TIMEOUT)]
             };
         false ->
@@ -442,7 +458,7 @@ get_timeout_options(Time) ->
 
 
 -spec log(string(), metadata(), list()) -> ok.
-log(Message, #metadata{name=Name, term=Term}, Args) ->
+log(Message, #metadata{name = Name, term = Term}, Args) ->
     FormattedMessage = io_lib:format(Message, Args),
     io:format("[~p Term #~p]: ~s~n", [Name, Term, FormattedMessage]).
 
@@ -453,9 +469,9 @@ has_majority(Votes, Nodes) when is_list(Votes), is_list(Nodes) ->
 
 
 -spec start_election(metadata()) -> list().
-start_election(#metadata{name=Name, nodes=Nodes, term=Term}) ->
-    VoteRequest = #vote_request{term=Term, candidate_id=Name},
-    [request_vote(Voter, VoteRequest) || #raft_node{name=Voter} <- Nodes].
+start_election(#metadata{name = Name, nodes = Nodes, term = Term}) ->
+    VoteRequest = #vote_request{term = Term, candidate_id = Name},
+    [request_vote(Voter, VoteRequest) || #raft_node{name = Voter} <- Nodes].
 
 
 -spec request_vote(atom(), vote_request()) -> ok.
@@ -465,7 +481,7 @@ request_vote(Voter, VoteRequest)
 
 
 -spec can_grant_vote(vote_request(), metadata()) -> boolean().
-can_grant_vote(#vote_request{term=CandidateTerm}, #metadata{term=CurrentTerm})
+can_grant_vote(#vote_request{term = CandidateTerm}, #metadata{term = CurrentTerm})
   when is_integer(CandidateTerm), is_integer(CurrentTerm) ->
     CandidateTerm >= CurrentTerm.
 
@@ -477,9 +493,10 @@ is_valid_term(Term, CurrentTerm)
 
 
 -spec with_latest_term(vote_request(), metadata()) -> metadata().
-with_latest_term(#vote_request{term=CandidateTerm}, #metadata{term=CurrentTerm}=Data) ->
+with_latest_term(#vote_request{term = CandidateTerm},
+                 #metadata{term = CurrentTerm} = Data) ->
     if CandidateTerm >= CurrentTerm ->
-            Data#metadata{term=CandidateTerm};
+            Data#metadata{term = CandidateTerm};
        CandidateTerm < CurrentTerm ->
             Data
     end.
@@ -494,8 +511,8 @@ get_latest_log_entry(Log) ->
 
 
 -spec send_vote(atom(), vote_request()) -> ok.
-send_vote(Name, #vote_request{term=Term, candidate_id=CandidateId}) ->
-    VoteGranted = #vote_granted{term=Term, voter_id=Name},
+send_vote(Name, #vote_request{term = Term, candidate_id = CandidateId}) ->
+    VoteGranted = #vote_granted{term = Term, voter_id = Name},
     gen_statem:cast(CandidateId, VoteGranted).
 
 
@@ -510,7 +527,7 @@ send_leader_info(#client_message{client_id = To, message_id = MessageId},
 
 
 -spec send_heartbeat(raft_node(), append_entries()) -> ok.
-send_heartbeat(#raft_node{name=Name}, Heartbeat) ->
+send_heartbeat(#raft_node{name = Name}, Heartbeat) ->
     gen_statem:cast(Name, Heartbeat).
 
 
@@ -595,15 +612,15 @@ init_test_() ->
 
 
 initial_metadata() ->
-    Nodes = lists:delete(#raft_node{name=n1}, ?NODES),
+    Nodes = lists:delete(#raft_node{name = n1}, ?NODES),
     create_metadata(n1, Nodes).
 
 follower_setup() ->
     Metadata = initial_metadata(),
     Metadata#metadata{term = 5}.
 
-test_follower_timeout(#metadata{term=Term}=Metadata) ->
-    Result = follower(timeout, ticker, Metadata#metadata{voted_for=n2}),
+test_follower_timeout(#metadata{term = Term} = Metadata) ->
+    Result = follower(timeout, ticker, Metadata#metadata{voted_for = n2}),
 
     ExpectedMetadata = initial_metadata(),
     Expected = {
@@ -615,9 +632,9 @@ test_follower_timeout(#metadata{term=Term}=Metadata) ->
 
     [?_assertEqual(Expected, Result)].
 
-test_follower_vote_request_not_voted_yet(#metadata{term=Term}=Metadata) ->
+test_follower_vote_request_not_voted_yet(#metadata{term = Term} = Metadata) ->
     Result = follower(cast,
-                      #vote_request{term=Term+1, candidate_id=n2},
+                      #vote_request{term = Term+1, candidate_id = n2},
                       Metadata),
     {_, _, Options} = Result,
 
@@ -631,10 +648,12 @@ test_follower_vote_request_not_voted_yet(#metadata{term=Term}=Metadata) ->
     [assert_options(Options),
      ?_assertEqual(Expected, Result)].
 
-test_follower_vote_request_with_candidate_older_term(#metadata{term=Term}=Metadata) ->
+test_follower_vote_request_with_candidate_older_term(
+  #metadata{term = Term} = Metadata) ->
+
     Result = follower(cast,
-                      #vote_request{term=Term-1, candidate_id=n2},
-                      Metadata#metadata{voted_for=n3}),
+                      #vote_request{term = Term-1, candidate_id = n2},
+                      Metadata#metadata{voted_for = n3}),
     {_, _, Options} = Result,
 
     ExpectedMetadata = initial_metadata(),
@@ -647,10 +666,10 @@ test_follower_vote_request_with_candidate_older_term(#metadata{term=Term}=Metada
     [assert_options(Options),
      ?_assertEqual(Expected, Result)].
 
-test_follower_vote_request_with_already_voted(#metadata{term=Term}=Metadata) ->
+test_follower_vote_request_with_already_voted(#metadata{term = Term} = Metadata) ->
     Result = follower(cast,
-                      #vote_request{term=Term, candidate_id=n2},
-                      Metadata#metadata{voted_for=n3}),
+                      #vote_request{term = Term, candidate_id = n2},
+                      Metadata#metadata{voted_for = n3}),
     {_, _, Options} = Result,
 
     ExpectedMetadata = initial_metadata(),
@@ -663,23 +682,25 @@ test_follower_vote_request_with_already_voted(#metadata{term=Term}=Metadata) ->
     [assert_options(Options),
      ?_assertEqual(Expected, Result)].
 
-test_follower_vote_request_with_new_term_but_already_voted(#metadata{term=Term}=Metadata) ->
+test_follower_vote_request_with_new_term_but_already_voted(
+  #metadata{term = Term} = Metadata) ->
+
     Result = follower(cast,
-                      #vote_request{term=Term+1, candidate_id=n2},
-                      Metadata#metadata{voted_for=n3}),
+                      #vote_request{term = Term+1, candidate_id = n2},
+                      Metadata#metadata{voted_for = n3}),
     {_, _, Options} = Result,
 
     ExpectedMetadata = initial_metadata(),
     Expected = {
         keep_state,
-        ExpectedMetadata#metadata{term = Term+1, voted_for=n2},
+        ExpectedMetadata#metadata{term = Term+1, voted_for = n2},
         Options
        },
 
     [assert_options(Options),
      ?_assertEqual(Expected, Result)].
 
-test_follower_vote_granted(#metadata{}=Metadata) ->
+test_follower_vote_granted(#metadata{} = Metadata) ->
     Result = follower(cast, #vote_granted{}, Metadata),
     {_, Options} = Result,
 
@@ -688,31 +709,41 @@ test_follower_vote_granted(#metadata{}=Metadata) ->
     [assert_options(Options),
      ?_assertEqual(Expected, Result)].
 
-test_follower_heartbeat_just_after_voting(#metadata{term=Term}=Metadata) ->
+test_follower_heartbeat_just_after_voting(#metadata{term = Term} = Metadata) ->
     Result = follower(cast,
-                      #append_entries{term=Term, leader_id=n2},
-                      Metadata#metadata{voted_for=n2}),
+                      #append_entries{term = Term, leader_id = n2},
+                      Metadata#metadata{voted_for = n2}),
     {_, _, Options} = Result,
 
     ExpectedMetadata = initial_metadata(),
     Expected = {
         keep_state,
-        ExpectedMetadata#metadata{term=Term, votes=[], voted_for=n2, leader_id=n2},
+        ExpectedMetadata#metadata{
+            term = Term,
+            votes = [],
+            voted_for = n2,
+            leader_id = n2
+           },
         Options
        },
 
     [assert_options(Options),
      ?_assertEqual(Expected, Result)].
 
-test_follower_heartbeat_with_older_term(#metadata{term=Term}=Metadata) ->
+test_follower_heartbeat_with_older_term(#metadata{term = Term} = Metadata) ->
     Result = follower(cast,
-                      #append_entries{term=Term-1, leader_id=n2},
-                      Metadata#metadata{voted_for=n3, leader_id=n3}),
+                      #append_entries{term = Term-1, leader_id = n2},
+                      Metadata#metadata{voted_for = n3, leader_id = n3}),
     ExpectedMetadata = initial_metadata(),
     Expected = {
         next_state,
         candidate,
-        ExpectedMetadata#metadata{term=Term, votes=[], voted_for=n3, leader_id=n3},
+        ExpectedMetadata#metadata{
+            term = Term,
+            votes = [],
+            voted_for = n3,
+            leader_id = n3
+           },
         [{timeout, 0, ticker}]
        },
 
@@ -738,7 +769,8 @@ follower_test_() ->
          {setup, fun follower_setup/0, fun test_follower_timeout/1}
      },
      {
-         "Follower received a vote request but has not voted in yet and votes in favour",
+         "Follower received a vote request but has not voted in yet"
+         " and votes in favour",
          {setup, fun follower_setup/0, fun test_follower_vote_request_not_voted_yet/1}
      },
      {
@@ -750,8 +782,9 @@ follower_test_() ->
          {setup, fun follower_setup/0, fun test_follower_vote_request_with_already_voted/1}
      },
      {
-         "Follower received a vote request but follower has already voted in the previous term,
-        however, this is a new term and it votes again in favour of the new candidate",
+         "Follower received a vote request but follower has already voted"
+         " in the previous term, however, this is a new term and it votes again"
+         " in favour of the new candidate",
        {setup, fun follower_setup/0, fun test_follower_vote_request_with_new_term_but_already_voted/1}
      },
      {
@@ -763,7 +796,8 @@ follower_test_() ->
          {setup, fun follower_setup/0, fun test_follower_heartbeat_just_after_voting/1}
      },
      {
-         "Follower received a heartbeat but from with an older term and promotes itself to candidate",
+         "Follower received a heartbeat but from with an older term and promotes"
+         " itself to candidate",
          {setup, fun follower_setup/0, fun test_follower_heartbeat_with_older_term/1}
      },
      {
@@ -777,22 +811,22 @@ candidate_setup() ->
     Metadata = initial_metadata(),
     Metadata#metadata{term = 6, votes = [n1], voted_for = n1}.
 
-test_candidate_timeout(#metadata{term=Term}=Metadata) ->
+test_candidate_timeout(#metadata{term = Term} = Metadata) ->
     Result = candidate(timeout, ticker, Metadata),
     {_, _, Options} = Result,
 
     ExpectedMetadata = initial_metadata(),
     Expected = {
         keep_state,
-        ExpectedMetadata#metadata{term=Term+1, votes=[n1], voted_for=n1},
+        ExpectedMetadata#metadata{term = Term+1, votes = [n1], voted_for = n1},
         Options
        },
 
     [assert_options(Options),
      ?_assertEqual(Expected, Result)].
 
-test_candidate_vote_request_with_older_term(#metadata{term=Term}=Metadata) ->
-    Result = candidate(cast, #vote_request{term=Term-1, candidate_id=n2}, Metadata),
+test_candidate_vote_request_with_older_term(#metadata{term = Term} = Metadata) ->
+    Result = candidate(cast, #vote_request{term = Term-1, candidate_id = n2}, Metadata),
     {_, Options} = Result,
 
     Expected = {keep_state_and_data, Options},
@@ -800,52 +834,52 @@ test_candidate_vote_request_with_older_term(#metadata{term=Term}=Metadata) ->
     [assert_options(Options),
      ?_assertEqual(Expected, Result)].
 
-test_candidate_vote_request_with_newer_term(#metadata{term=Term}=Metadata) ->
-    Result = candidate(cast, #vote_request{term=Term+1, candidate_id=n2}, Metadata),
+test_candidate_vote_request_with_newer_term(#metadata{term = Term} = Metadata) ->
+    Result = candidate(cast, #vote_request{term = Term+1, candidate_id = n2}, Metadata),
     {_, _, _, Options} = Result,
 
     ExpectedMetadata = initial_metadata(),
     Expected = {
         next_state,
         follower,
-        ExpectedMetadata#metadata{term=Term+1, votes=[], voted_for=n2},
+        ExpectedMetadata#metadata{term = Term+1, votes = [], voted_for = n2},
         Options
        },
 
     [assert_options(Options),
      ?_assertEqual(Expected, Result)].
 
-test_candidate_vote_granted_but_no_majority(#metadata{term=Term}=Metadata) ->
+test_candidate_vote_granted_but_no_majority(#metadata{term = Term} = Metadata) ->
     Result = candidate(cast,
-                       #vote_granted{term=Term, voter_id=n2},
+                       #vote_granted{term = Term, voter_id = n2},
                        Metadata),
     {_, _, Options} = Result,
 
     ExpectedMetadata = initial_metadata(),
     Expected = {
         keep_state,
-        ExpectedMetadata#metadata{term=Term, votes=[n1, n2], voted_for=n1},
+        ExpectedMetadata#metadata{term = Term, votes = [n1, n2], voted_for = n1},
         Options
        },
 
     [assert_options(Options),
      ?_assertEqual(Expected, Result)].
 
-test_candidate_vote_granted_with_majority(#metadata{term=Term}=Metadata) ->
+test_candidate_vote_granted_with_majority(#metadata{term = Term} = Metadata) ->
     Result = candidate(cast,
-                       #vote_granted{term=Term, voter_id=n3},
+                       #vote_granted{term = Term, voter_id = n3},
                        Metadata#metadata{votes = [n1, n2]}),
     ExpectedMetadata = initial_metadata(),
     Expected = {
         next_state, leader,
-        ExpectedMetadata#metadata{term=Term, votes=[n1, n2, n3], voted_for=n1},
+        ExpectedMetadata#metadata{term = Term, votes = [n1, n2, n3], voted_for = n1},
         [{timeout, 0, ticker}]
        },
 
     [?_assertEqual(Expected, Result)].
 
-test_candidate_vote_granted_but_older_term(#metadata{term=Term}=Metadata) ->
-    Result = candidate(cast, #vote_granted{term=Term-1, voter_id=n2}, Metadata),
+test_candidate_vote_granted_but_older_term(#metadata{term = Term} = Metadata) ->
+    Result = candidate(cast, #vote_granted{term = Term-1, voter_id = n2}, Metadata),
     {_, Options} = Result,
 
     Expected = {keep_state_and_data, Options},
@@ -853,9 +887,9 @@ test_candidate_vote_granted_but_older_term(#metadata{term=Term}=Metadata) ->
     [assert_options(Options),
      ?_assertEqual(Expected, Result)].
 
-test_candidate_heartbeat_with_older_term(#metadata{term=Term}=Metadata) ->
+test_candidate_heartbeat_with_older_term(#metadata{term = Term} = Metadata) ->
     Result = candidate(cast,
-                       #append_entries{term=Term-1, leader_id=n2},
+                       #append_entries{term = Term-1, leader_id = n2},
                        Metadata),
     {_, Options} = Result,
 
@@ -864,15 +898,20 @@ test_candidate_heartbeat_with_older_term(#metadata{term=Term}=Metadata) ->
     [assert_options(Options),
      ?_assertEqual(Expected, Result)].
 
-test_candidate_heartbeat_with_newer_term(#metadata{term=Term}=Metadata) ->
-    Result = candidate(cast, #append_entries{term=Term+1, leader_id=n2}, Metadata),
+test_candidate_heartbeat_with_newer_term(#metadata{term = Term} = Metadata) ->
+    Result = candidate(cast, #append_entries{term = Term+1, leader_id = n2}, Metadata),
     {_, _, _,  Options} = Result,
 
     ExpectedMetadata = initial_metadata(),
     Expected = {
         next_state,
         follower,
-        ExpectedMetadata#metadata{term=Term+1, votes=[], voted_for=null, leader_id=n2},
+        ExpectedMetadata#metadata{
+            term = Term+1,
+            votes = [],
+            voted_for = null,
+            leader_id = n2
+           },
         Options
        },
 
@@ -899,23 +938,44 @@ candidate_test_() ->
      },
      {
          "Candidate receives a vote request but with an older term",
-         {setup, fun candidate_setup/0, fun test_candidate_vote_request_with_older_term/1}
+         {
+             setup,
+             fun candidate_setup/0,
+             fun test_candidate_vote_request_with_older_term/1
+         }
      },
      {
-         "Candidate receives a vote request with a newer term, votes in favour and steps down to follower",
-         {setup, fun candidate_setup/0, fun test_candidate_vote_request_with_newer_term/1}
+         "Candidate receives a vote request with a newer term, votes in favour"
+         " and steps down to follower",
+         {
+             setup,
+             fun candidate_setup/0,
+             fun test_candidate_vote_request_with_newer_term/1
+         }
      },
      {
          "Candidate receives a heartbeat with an older term",
-         {setup, fun candidate_setup/0, fun test_candidate_heartbeat_with_older_term/1}
+         {
+             setup,
+             fun candidate_setup/0,
+             fun test_candidate_heartbeat_with_older_term/1
+         }
      },
      {
          "Candidate receives a heartbeat with a newer term, steps down to follower",
-         {setup, fun candidate_setup/0, fun test_candidate_heartbeat_with_newer_term/1}
+         {
+             setup,
+             fun candidate_setup/0,
+             fun test_candidate_heartbeat_with_newer_term/1
+         }
      },
      {
          "Candidate receives a vote but has not attained majority and remains a candidate",
-         {setup, fun candidate_setup/0, fun test_candidate_vote_granted_but_no_majority/1}
+         {
+             setup,
+             fun candidate_setup/0,
+             fun test_candidate_vote_granted_but_no_majority/1
+         }
      },
      {
          "Candidate receives a vote and has attained majority and becomes a leader",
@@ -923,13 +983,18 @@ candidate_test_() ->
      },
      {
          "Candidate receives a vote and the term is outdated",
-         {setup, fun candidate_setup/0, fun test_candidate_vote_granted_but_older_term/1}
+         {
+             setup,
+             fun candidate_setup/0,
+             fun test_candidate_vote_granted_but_older_term/1
+         }
      },
      {
          "Candidate received a client message and sends a cast back to the client",
          {setup, fun candidate_setup/0, fun test_candidate_client_message/1}
      }
     ].
+
 
 leader_setup() ->
     Metadata = initial_metadata(),
@@ -956,52 +1021,57 @@ test_leader_timeout_with_empty_log(#metadata{term = Term} = Metadata) ->
 
     [?_assertEqual(Expected, Result)].
 
-test_leader_vote_request_with_older_term(#metadata{term=Term}=Metadata) ->
-    Result = leader(cast, #vote_request{term=Term-1, candidate_id=n2}, Metadata),
+test_leader_vote_request_with_older_term(#metadata{term = Term} = Metadata) ->
+    Result = leader(cast, #vote_request{term = Term-1, candidate_id = n2}, Metadata),
 
     Expected = {keep_state_and_data, leader_options()},
 
     [?_assertEqual(Expected, Result)].
 
-test_leader_vote_request_with_newer_term(#metadata{term=Term}=Metadata) ->
-    Result = leader(cast, #vote_request{term=Term+1, candidate_id=n2}, Metadata),
+test_leader_vote_request_with_newer_term(#metadata{term = Term} = Metadata) ->
+    Result = leader(cast, #vote_request{term = Term+1, candidate_id = n2}, Metadata),
 
     ExpectedMetadata = initial_metadata(),
     Expected = {
         next_state,
         follower,
-        ExpectedMetadata#metadata{term=Term+1, votes=[], voted_for=n2},
+        ExpectedMetadata#metadata{term = Term+1, votes = [], voted_for = n2},
         leader_options()
        },
 
     [?_assertEqual(Expected, Result)].
 
-test_leader_vote_granted(#metadata{term=Term}=Metadata) ->
-    Result = leader(cast, #vote_granted{term=Term, voter_id=n2}, Metadata),
+test_leader_vote_granted(#metadata{term = Term} = Metadata) ->
+    Result = leader(cast, #vote_granted{term = Term, voter_id = n2}, Metadata),
 
     Expected = {keep_state_and_data, leader_options()},
 
     [?_assertEqual(Expected, Result)].
 
-test_leader_heartbeat_with_older_term(#metadata{term=Term}=Metadata) ->
+test_leader_heartbeat_with_older_term(#metadata{term = Term} = Metadata) ->
     Result = leader(cast,
-                    #append_entries{term=Term-1, leader_id=n2, entries=[]},
+                    #append_entries{term = Term-1, leader_id = n2, entries = []},
                     Metadata),
 
     Expected = {keep_state_and_data, leader_options()},
 
     [?_assertEqual(Expected, Result)].
 
-test_leader_heartbeat_with_newer_term(#metadata{term=Term}=Metadata) ->
+test_leader_heartbeat_with_newer_term(#metadata{term = Term} = Metadata) ->
     Result = leader(cast,
-                    #append_entries{term=Term+1, leader_id=n2, entries=[]},
+                    #append_entries{term = Term+1, leader_id = n2, entries = []},
                     Metadata),
 
     ExpectedMetadata = initial_metadata(),
     Expected = {
         next_state,
         follower,
-        ExpectedMetadata#metadata{term=Term+1, votes=[], voted_for=null, leader_id=n2},
+        ExpectedMetadata#metadata{
+            term = Term+1,
+            votes = [],
+            voted_for = null,
+            leader_id = n2
+           },
         leader_options()
        },
 
@@ -1014,9 +1084,7 @@ test_leader_client_message(#metadata{term = Term} = Metadata) ->
                          command = "test"
                         },
 
-    Result = leader(cast,
-                    ClientMessage,
-                    Metadata),
+    Result = leader(cast, ClientMessage, Metadata),
 
     ExpectedMetadata = initial_metadata(),
     Expected = {
@@ -1045,11 +1113,13 @@ leader_test_() ->
          {setup, fun leader_setup/0, fun test_leader_timeout_with_empty_log/1}
      },
      {
-         "Leader receives a vote request but with an older term and ignores the request",
+         "Leader receives a vote request but with an older term"
+         " and ignores the request",
          {setup, fun leader_setup/0, fun test_leader_vote_request_with_older_term/1}
      },
      {
-         "Leader receives a vote request but with the newer term and steps down to follower",
+         "Leader receives a vote request but with the newer term"
+         " and steps down to follower",
          {setup, fun leader_setup/0, fun test_leader_vote_request_with_newer_term/1}
      },
      {
@@ -1065,7 +1135,8 @@ leader_test_() ->
          {setup, fun leader_setup/0, fun test_leader_heartbeat_with_newer_term/1}
      },
      {
-         "Leader receives a client message and sends append entries RPCs and updates its log",
+         "Leader receives a client message and sends append entries RPCs"
+         " and updates its log",
          {setup, fun leader_setup/0, fun test_leader_client_message/1}
      }
     ].

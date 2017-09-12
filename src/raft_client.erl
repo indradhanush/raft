@@ -144,7 +144,12 @@ client_test_() ->
     [
      {
          "Client tries to write to a follower with no leader elected",
-         {setup, fun setup/0, fun teardown/1, fun test_write_to_follower_with_no_leader/1}
+         {
+             setup,
+             fun setup/0,
+             fun teardown/1,
+             fun test_write_to_follower_with_no_leader/1
+         }
      },
      {
          "Client tries to write to a follower with no leader elected",
