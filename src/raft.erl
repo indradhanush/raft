@@ -52,7 +52,11 @@
 
 -record(vote_request, {term, candidate_id}).
 
+-type vote_request() :: #vote_request{}.
+
+
 -record(vote_granted, {term, voter_id}).
+
 
 -record(append_entries, {
             term           :: non_neg_integer(),
@@ -61,6 +65,8 @@
             prev_log_term  :: non_neg_integer(),
             entries = []   :: [log_entry()]
            }).
+
+-type append_entries() :: #append_entries{}.
 
 
 %%%===================================================================
@@ -424,43 +430,60 @@ code_change(_OldVsn, State, Data, _Extra) ->
 create_metadata(Name, Nodes) ->
     #metadata{name = Name, nodes = Nodes}.
 
+
+-spec get_timeout_options() -> {timeout, integer(), ticker}.
 get_timeout_options() ->
     {timeout, Timeout, ticker} = get_timeout_options(rand:uniform(?TIMEOUT_RANGE)),
     {timeout, ?TIMEOUT_SEED + Timeout, ticker}.
 
+-spec get_timeout_options(integer()) -> {timeout, integer(), ticker}.
 get_timeout_options(Time) ->
     {timeout, Time, ticker}.
 
+
+-spec log(string(), metadata(), list()) -> ok.
 log(Message, #metadata{name=Name, term=Term}, Args) ->
     FormattedMessage = io_lib:format(Message, Args),
     io:format("[~p Term #~p]: ~s~n", [Name, Term, FormattedMessage]).
 
+
+-spec has_majority(list(), [raft_node()]) -> boolean().
 has_majority(Votes, Nodes) when is_list(Votes), is_list(Nodes) ->
     length(Votes) >= (length(Nodes) div 2) + 1.
 
+
+-spec start_election(metadata()) -> list().
 start_election(#metadata{name=Name, nodes=Nodes, term=Term}) ->
     VoteRequest = #vote_request{term=Term, candidate_id=Name},
     [request_vote(Voter, VoteRequest) || #raft_node{name=Voter} <- Nodes].
 
 
+-spec request_vote(atom(), vote_request()) -> ok.
 request_vote(Voter, VoteRequest)
   when is_atom(Voter) ->
     gen_statem:cast(Voter, VoteRequest).
 
 
+-spec can_grant_vote(vote_request(), metadata()) -> boolean().
 can_grant_vote(#vote_request{term=CandidateTerm}, #metadata{term=CurrentTerm})
   when is_integer(CandidateTerm), is_integer(CurrentTerm) ->
     CandidateTerm >= CurrentTerm.
 
-is_valid_term(Term, CurrentTerm) ->
+
+-spec is_valid_term(integer(), integer()) -> boolean().
+is_valid_term(Term, CurrentTerm)
+  when is_integer(Term), is_integer(CurrentTerm) ->
     Term >= CurrentTerm.
 
+
+-spec with_latest_term(vote_request(), metadata()) -> metadata().
 with_latest_term(#vote_request{term=CandidateTerm}, #metadata{term=CurrentTerm}=Data) ->
     if CandidateTerm >= CurrentTerm ->
             Data#metadata{term=CandidateTerm};
        CandidateTerm < CurrentTerm ->
             Data
     end.
+
 
 -spec get_latest_log_entry([log_entry()]) -> log_entry().
 get_latest_log_entry([]) ->
@@ -470,31 +493,42 @@ get_latest_log_entry(Log) ->
     lists:last(Log).
 
 
+-spec send_vote(atom(), vote_request()) -> ok.
 send_vote(Name, #vote_request{term=Term, candidate_id=CandidateId}) ->
     VoteGranted = #vote_granted{term=Term, voter_id=Name},
     gen_statem:cast(CandidateId, VoteGranted).
 
 
+-spec send_leader_info(
+          client_message(),
+          metadata()
+         ) -> {error, atom(), string(), atom()}.
 send_leader_info(#client_message{client_id = To, message_id = MessageId},
                  #metadata{name = From, leader_id = LeaderId}) ->
     io:format("Sending leader info to client"),
     To ! {error, From, MessageId, LeaderId}.
 
+
+-spec send_heartbeat(raft_node(), append_entries()) -> ok.
 send_heartbeat(#raft_node{name=Name}, Heartbeat) ->
     gen_statem:cast(Name, Heartbeat).
 
 
+-spec send_response_to_client(
+          client_message(),
+          metadata()
+         ) -> {ok, atom(), string()}.
 send_response_to_client(#client_message{client_id = To, message_id = MessageId},
                         #metadata{name = From}) ->
     To ! {ok, From, MessageId}.
 
+
 -spec send_append_entries(
-          atom(),
+          raft_node(),
           log_entry(),
           [log_entry()],
           metadata()
          ) -> ok.
-
 send_append_entries(#raft_node{name = Name},
                     #log_entry{index = PrevLogIndex, term = PrevLogTerm},
                     LogEntries,
