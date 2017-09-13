@@ -45,8 +45,8 @@
 -record(append_entries, {
             term           :: non_neg_integer(),
             leader_id      :: atom(),
-            prev_log_index :: non_neg_integer(),
-            prev_log_term  :: non_neg_integer(),
+            prev_log_index :: undefined | non_neg_integer(),
+            prev_log_term  :: undefined | non_neg_integer(),
             entries = []   :: [log_entry()]
            }).
 
