@@ -1,3 +1,58 @@
+%% The timeout interval after which the leader will send heartbeats.
+-define(HEARTBEAT_TIMEOUT, 20).
+
+%% The maximum timeout for nodes (see TIMEOUT_SEED).
+-define(TIMEOUT_RANGE, 150).
+
+-ifdef(TEST).
+
+%% The minimum timeout range. This combines with TIMEOUT_RANGE to give
+%% a lower and upper limit between which random timeouts are
+%% generated.
+-define(TIMEOUT_SEED, 15000000000).
+
+%% The list of nodes in the cluster.
+-define(NODES, [
+                #raft_node{name = n1},
+                #raft_node{name = n2},
+                #raft_node{name = n3},
+                #raft_node{name = n4},
+                #raft_node{name = n5}
+               ]).
+
+-else.
+
+-define(TIMEOUT_SEED, 150).
+
+-define(NODES, [
+                #raft_node{name = n1},
+                #raft_node{name = n2},
+                #raft_node{name = n3},
+                #raft_node{name = n4},
+                #raft_node{name = n5}
+               ]).
+
+-endif.
+
+-record(vote_request, {term, candidate_id}).
+
+-type vote_request() :: #vote_request{}.
+
+
+-record(vote_granted, {term, voter_id}).
+
+
+-record(append_entries, {
+            term           :: non_neg_integer(),
+            leader_id      :: atom(),
+            prev_log_index :: non_neg_integer(),
+            prev_log_term  :: non_neg_integer(),
+            entries = []   :: [log_entry()]
+           }).
+
+-type append_entries() :: #append_entries{}.
+
+
 -record(raft_node, {
             name             :: atom(),
             next_index = 0   :: non_neg_integer(),
