@@ -46,9 +46,7 @@ assert_follower_state(Node, TestName) ->
                 }
     } = sys:get_state(Node),
 
-    ExpectedNodes = [
-        #raft_node{name = X} || X <- lists:delete(Node, [n1, n2, n3, n4, n5])
-    ],
+    ExpectedNodes = lists:delete(#raft_node{name = Node}, ?NODES),
 
     [?_assertEqual(follower, State),
      ?_assertEqual(Node, Name),
@@ -84,8 +82,14 @@ test_write_to_follower_with_no_leader(_Nodes) ->
 test_write_to_follower_with_leader(_Nodes) ->
     gen_statem:cast(n1, test_timeout),
 
-    Response = raft_client:write(n2,
-                     create_client_message(test_message_id, "test command")),
+    %% The sleep is enough for the nodes to send and receive the
+    %% message and complete a leader election
+    timer:sleep(1),
+
+    Response = raft_client:write(
+                   n2,
+                   create_client_message(test_message_id, "test command")
+                  ),
 
     [assert_follower_state(n2, test_write_to_follower_with_leader),
      assert_follower_state(n3, test_write_to_follower_with_leader),
