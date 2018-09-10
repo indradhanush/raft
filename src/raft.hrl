@@ -6,7 +6,7 @@
 
 -ifdef(TEST).
 
-%% The minimum timeout range. This combines with TIMEOUT_RANGE to give
+%% The lower limit of the timeout range. This combines with TIMEOUT_RANGE to give
 %% a lower and upper limit between which random timeouts are
 %% generated.
 -define(TIMEOUT_SEED, 15000000000).
