@@ -178,26 +178,22 @@ test_write_to_candidate_with_no_leader(Nodes) ->
                    create_client_message(test_message_id, "test command")
                   ),
 
-    [assert_candidate_state_with_no_leader(n1, test_write_to_candidate_with_no_leader),
-     ?_assertEqual({error, null}, Response)].
+    ExpectedNodes = lists:delete(#raft_node{name = n1}, ?NODES),
+    ExpectedMetadata = #metadata{
+                            name = n1,
+                            nodes = ExpectedNodes,
+                            term = 1,
+                            votes = [n1],
+                            voted_for = n1,
+                            leader_id = null
+                           },
 
-
-test_write_to_candidate_with_leader(_Nodes) ->
-    gen_statem:cast(n1, test_timeout),
-
-    %% The sleep is enough for the nodes to send and receive the
-    %% message and complete a leader election
-    timer:sleep(1),
-
-    gen_statem:cast(n2, test_timeout),
-
-    Response = raft_client:write(
-                   n2,
-                   create_client_message(test_message_id, "test command")
-                  ),
-
-    [assert_candidate_state_with_leader(n2, test_write_to_candidate_with_leader),
-     ?_assertEqual({error, n1}, Response)].
+    [
+     assert_candidate_state(
+         ExpectedMetadata, test_write_to_candidate_with_no_leader
+        ),
+     ?_assertEqual({error, null}, Response)
+    ].
 
 
 test_write_to_leader(_Nodes) ->
@@ -245,15 +241,6 @@ client_test_() ->
              fun candidate_setup/0,
              fun teardown/1,
              fun test_write_to_candidate_with_no_leader/1
-         }
-     },
-     {
-         "Client tries to write to a candidate with a leader elected",
-         {
-             setup,
-             fun setup/0,
-             fun teardown/1,
-             fun test_write_to_candidate_with_leader/1
          }
      },
      {
