@@ -49,16 +49,25 @@ assert_follower_state(Node, TestName) ->
     ExpectedNodes = lists:delete(#raft_node{name = Node}, ?NODES),
 
     [
-     ?_assertEqual(follower, State),
-     ?_assertEqual(Node, Name),
-     ?_assertEqual(ExpectedNodes, Nodes),
-     ?_assertEqual(1, Term),
-     ?_assertEqual([], Votes),
+     ?_assertEqual({TestName, follower}, {TestName, State}),
+     ?_assertEqual({TestName, Node}, {TestName, Name}),
+     ?_assertEqual({TestName, ExpectedNodes}, {TestName, Nodes}),
+     ?_assertEqual({TestName, 1}, {TestName, Term}),
+     ?_assertEqual({TestName, []}, {TestName, Votes}),
      ?_assertEqual({TestName, n1}, {TestName, VotedFor}),
      ?_assertEqual({TestName, n1}, {TestName, LeaderId})
     ].
 
-assert_candidate_state_with_no_leader(Node, TestName) ->
+
+assert_candidate_state(#metadata{
+                            name = ExpectedName,
+                            nodes = ExpectedNodes,
+                            term = ExpectedTerm,
+                            votes = ExpectedVotes,
+                            voted_for = ExpectedVotedFor,
+                            leader_id = ExpectedLeaderId
+                           },
+                       TestName) ->
     {State, #metadata{
                  name = Name,
                  nodes = Nodes,
@@ -67,19 +76,19 @@ assert_candidate_state_with_no_leader(Node, TestName) ->
                  voted_for = VotedFor,
                  leader_id = LeaderId
                 }
-    } = sys:get_state(Node),
+    } = sys:get_state(ExpectedName),
 
-    ExpectedNodes = lists:delete(#raft_node{name = Node}, ?NODES),
 
     [
-     ?_assertEqual(candidate, State),
-     ?_assertEqual({TestName, Node}, {TestName, Name}),
+     ?_assertEqual({TestName, candidate}, {TestName, State}),
+     ?_assertEqual({TestName, ExpectedName}, {TestName, Name}),
      ?_assertEqual({TestName, ExpectedNodes}, {TestName, Nodes}),
-     ?_assertEqual({TestName, 1}, {TestName, Term}),
-     ?_assertEqual({TestName, [n1]}, {TestName, Votes}),
-     ?_assertEqual({TestName, n1}, {TestName, VotedFor}),
-     ?_assertEqual({TestName, null}, {TestName, LeaderId})
+     ?_assertEqual({TestName, ExpectedTerm}, {TestName, Term}),
+     ?_assertEqual({TestName, ExpectedVotes}, {TestName, lists:sort(Votes)}),
+     ?_assertEqual({TestName, ExpectedVotedFor}, {TestName, VotedFor}),
+     ?_assertEqual({TestName, ExpectedLeaderId}, {TestName, LeaderId})
     ].
+
 
 assert_candidate_state_with_leader(Node, TestName) ->
     {State, #metadata{
@@ -97,7 +106,7 @@ assert_candidate_state_with_leader(Node, TestName) ->
     ],
 
     [
-     ?_assertEqual(leader, State),
+     ?_assertEqual({TestName, leader}, {TestName, State}),
      ?_assertEqual({TestName, Node}, {TestName, Name}),
      ?_assertEqual({TestName, ExpectedNodes}, {TestName, Nodes}),
      ?_assertEqual({TestName, 2}, {TestName, Term}),
@@ -107,10 +116,29 @@ assert_candidate_state_with_leader(Node, TestName) ->
     ].
 
 
-assert_leader_state(Node) ->
-    {State, #metadata{votes = Votes}} = sys:get_state(Node),
-    [?_assertEqual(leader, State),
-     ?_assertEqual([n1, n2, n3], lists:sort(Votes))].
+assert_leader_state(Node, TestName) ->
+    {State, #metadata{
+                 name = Name,
+                 nodes = Nodes,
+                 term = Term,
+                 votes = Votes,
+                 voted_for = VotedFor,
+                 leader_id = LeaderId
+                }
+    } = sys:get_state(Node),
+
+    ExpectedNodes = [
+        X#raft_node{next_index = 1} || X <- lists:delete(#raft_node{name = Node}, ?NODES)
+    ],
+
+    [?_assertEqual({TestName, leader}, {TestName, State}),
+     ?_assertEqual({TestName, Node}, {TestName, Name}),
+     ?_assertEqual({TestName, ExpectedNodes}, {TestName, Nodes}),
+     ?_assertEqual({TestName, 1}, {TestName, Term}),
+     ?_assertEqual({TestName, [n1, n2, n3]}, {TestName, lists:sort(Votes)}),
+     ?_assertEqual({TestName, Node}, {TestName, VotedFor}),
+     ?_assertEqual({TestName, null}, {TestName, LeaderId})
+    ].
 
 
 test_write_to_follower_with_no_leader(_Nodes) ->
@@ -138,11 +166,11 @@ test_write_to_follower_with_leader(_Nodes) ->
 
     [assert_follower_state(n2, test_write_to_follower_with_leader),
      assert_follower_state(n3, test_write_to_follower_with_leader),
-     assert_leader_state(n1),
+     assert_leader_state(n1, test_write_to_follower_with_leader),
      ?_assertEqual({error, n1}, Response)].
 
 
-test_write_to_candidate_with_no_leader(_Nodes) ->
+test_write_to_candidate_with_no_leader(Nodes) ->
     gen_statem:cast(n1, test_timeout),
 
     Response = raft_client:write(
@@ -186,7 +214,7 @@ test_write_to_leader(_Nodes) ->
 
     [assert_follower_state(n2, test_write_to_leader),
      assert_follower_state(n3, test_write_to_leader),
-     assert_leader_state(n1),
+     assert_leader_state(n1, test_write_to_leader),
      ?_assertEqual(ok, Response)].
 
 
